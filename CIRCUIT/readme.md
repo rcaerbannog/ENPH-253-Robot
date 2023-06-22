@@ -1,0 +1,1 @@
+Place KICAD-generated circuits in this folder. No hierarchical file structure needed. 
