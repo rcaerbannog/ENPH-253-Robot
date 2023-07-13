@@ -7,7 +7,7 @@
 #define PIN_TAPE_SENSOR_RIGHT PA5	// as analog voltage reading
 #define PIN_CHECKPOINT_SENSOR_LEFT PA12	// as analog voltage reading
 #define PIN_CHECKPOINT_SENSOR_RIGHT PA15	// as analog voltage reading
-#define PIN_STEERING_SERVO PA_0	// as PWM servo control
+#define PIN_STEERING_SERVO PA_6	// as PWM servo control
 // Originally PB6-9, but this interferes with LCD screen for debugging.
 // Find out how to use SWV Trace (via pin PB3, TRACE SWO) to debug bluepill
 #define PIN_LMOTOR_FWD PA_8
@@ -45,6 +45,7 @@ Adafruit_SSD1306 display_handler(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET)
 
 
 // put function declarations here:
+void writeToDisplay(const char *str);
 void updateTapeSensors();
 void tapeFollowing();
 void steeringControl(double steeringAngleDeg);
@@ -66,17 +67,26 @@ void setup() {
   	// for testing, add an assertions check to make sure all variables remain in range. (Basically implementing a rep invariant checker.)
   	// default testing:
 	display_handler.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+	display_handler.display();
 	delay(2000);
 	display_handler.clearDisplay();
 	display_handler.setTextSize(1);
 	display_handler.setTextColor(SSD1306_WHITE);
-	display_handler.setCursor(0,0);
+
+	writeToDisplay("The program has frozen just after setup!");
   	motorControl(POWER_SCALE, POWER_SCALE);
 }
 
 void loop() {
   	tapeFollowing();
   	return;
+}
+
+void writeToDisplay(const char *str) {
+	display_handler.clearDisplay();
+	display_handler.setCursor(0, 0);
+	display_handler.println(str);
+	display_handler.display();
 }
 
 /*
@@ -117,8 +127,8 @@ void tapeFollowing() {
 		
 		// Define error to right, right steering as +
 		double steeringAngle;
-		int leftMotorPower;
-		int rightMotorPower;
+		double leftMotorPower;
+		double rightMotorPower;
 		int error = 9999;
 		if (leftOnTape && rightOnTape) {
 			// define error as the deviation of the minimum sensor value from its value when centered on the tape
@@ -135,39 +145,44 @@ void tapeFollowing() {
 			leftMotorPower = POWER_SCALE;
 			rightMotorPower = POWER_SCALE;
 		} else if (leftOnTape) {	// we are far to the right!
-			steeringAngle = - maxNormalSteeringAngle;
+			steeringAngle = maxNormalSteeringAngle;
 			leftMotorPower =  0.9 * POWER_SCALE;
 			rightMotorPower = POWER_SCALE;
 		} else if (rightOnTape) {	// we are far to the left!
-			steeringAngle = maxNormalSteeringAngle;
+			steeringAngle = - maxNormalSteeringAngle;
 			leftMotorPower = POWER_SCALE;
 			rightMotorPower = 0.9 * POWER_SCALE;
 		} else {	// completely off tape. Refer to previous state and use differential steering.
-			// Write a motor to 0 and continue detection
-			if (prevLeftOnTape) {
-				steeringAngle = - maxSteeringAngle;
+			if (prevLeftOnTape) {	// we are completely off to the right!
+				steeringAngle = maxSteeringAngle;
 				leftMotorPower = 0;
 				rightMotorPower = 0.8 * POWER_SCALE;
-			} else {
-				steeringAngle = maxSteeringAngle;
+			} else {	// we are completely off to the left!
+				steeringAngle = -maxSteeringAngle;
 				leftMotorPower = 0;
 				rightMotorPower = 0.8 * POWER_SCALE;
 			}
 		}
-		
 		steeringControl(steeringAngle);
 		motorControl(leftMotorPower, rightMotorPower);
-		prevLeftOnTape = leftOnTape;
-		prevRightOnTape = rightOnTape;
+		if (leftOnTape || rightOnTape) {
+			prevLeftOnTape = leftOnTape;
+			prevRightOnTape = rightOnTape;
+		}
 
+		
 		display_handler.clearDisplay();
 		display_handler.setCursor(0, 0);
-		display_handler.printf("L: %4d  R: %4d\n", leftTapeSensorValue, rightTapeSensorValue);
-		display_handler.printf("Dif: %5d   Error: %5d\n", rightTapeSensorValue - leftTapeSensorValue, error);
-		display_handler.printf("LMotor: %.3f   RMotor: %.3f\n", leftMotorPower, rightMotorPower);
-		display_handler.printf("Steering angle: %5.1f\n", steeringAngle);
 		display_handler.printf("Spare time: %d", nextLoopTime - millis());
-
+		display_handler.printf("L: %4d  R: %4d\nError: %4d\n", leftTapeSensorValue, rightTapeSensorValue, error);
+		display_handler.print("LMotor: ");
+		display_handler.println(leftMotorPower, 3);
+		display_handler.print("RMotor: ");
+		display_handler.println(rightMotorPower, 3);
+		display_handler.print("Steering angle: ");
+		display_handler.println(steeringAngle, 1);
+		display_handler.display();
+		
 		while (millis() < nextLoopTime);	// pause until next scheduled control loop
 		nextLoopTime += LOOP_TIME_MILLIS;
 	}
