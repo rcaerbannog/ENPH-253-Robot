@@ -1,76 +1,83 @@
 #include <Arduino.h>
-#include <Servo.h>
+#include <Wire.h>
+#include <Adafruit_SSD1306.h>
 
 // PIN DEFINITIONS
 #define PIN_TAPE_SENSOR_LEFT PA4	// as analog voltage reading
 #define PIN_TAPE_SENSOR_RIGHT PA5	// as analog voltage reading
 #define PIN_CHECKPOINT_SENSOR_LEFT PA12	// as analog voltage reading
 #define PIN_CHECKPOINT_SENSOR_RIGHT PA15	// as analog voltage reading
-#define PIN_STEERING_SERVO PA11	// as PWM servo control
-#define PIN_LMOTOR_FWD PB6
-#define PIN_LMOTOR_REV PB7
-#define PIN_RMOTOR_FWD PB8
-#define PIN_RMOTOR_REV PB9
-
-
-
-// ENUMS
-
-
-// put function declarations here:
-void updateTapeError();
-void steering();
-void motorControl();
-
-Servo steeringServo;	// might replace with manual PWM control. Test duty cycle to servo angle map with calibration program.
-
-void setup() {
-  pinMode(PIN_TAPE_SENSOR_LEFT, INPUT);
-  pinMode(PIN_TAPE_SENSOR_RIGHT, INPUT);
-  pinMode(PIN_CHECKPOINT_SENSOR_LEFT, INPUT);
-  pinMode(PIN_CHECKPOINT_SENSOR_RIGHT, INPUT);
-  
-  pinMode(PIN_LMOTOR_FWD, OUTPUT);
-  pinMode(PIN_LMOTOR_REV, OUTPUT);
-  pinMode(PIN_RMOTOR_FWD, OUTPUT);
-  pinMode(PIN_RMOTOR_REV, OUTPUT);
-  
-  //pinMode(PIN_STEERING_SERVO, OUTPUT);
-  steeringServo.attach(PIN_STEERING_SERVO);
-  
-  // for testing, add an assertions check to make sure all variables remain in range. (Basically implementing a rep invariant checker.)
-  // default testing:
-  analogWrite(PIN_LMOTOR_FWD, motorDutyCycle);
-  analogWrite(PIN_RMOTOR_FWD, motorDutyCycle);
-}
-
-void loop() {
-  tapeFollowing();
-  delay(100);	// replace with clock absolute reference
-}
-
+#define PIN_STEERING_SERVO PA_0	// as PWM servo control
+// Originally PB6-9, but this interferes with LCD screen for debugging.
+// Find out how to use SWV Trace (via pin PB3, TRACE SWO) to debug bluepill
+#define PIN_LMOTOR_FWD PA_8
+#define PIN_LMOTOR_REV PA_9
+#define PIN_RMOTOR_FWD PA_10
+#define PIN_RMOTOR_REV PA_11
 
 /*
  * TAPE FOLLOWING
  */
- 
+const double WHEELBASE = 200;	// mm
+const double WHEELSEP = 70;	// mm
+const int TAPE_SENSOR_INTERSECTION_VALUE = 900;
 const int TAPE_SENSOR_THRESHOLD = 500;
 const int CHECKPOINT_SENSOR_THRESHOLD = 500;
-
-const double STEERING_KP = 1.0;
-const double MOTOR_POWER_KP = 1.0;
+const double STEERING_KP = 0.1;
+const double STEERING_KD = 0.0;	// time derivative unit milliseconds 
+const double POWER_SCALE = 1.00; // For testing only. Between 0 and 1
+const int MOTOR_PWM_FREQ = 50;	// Shared with servos. 
 
 int leftTapeSensorValue = 0;
 int rightTapeSensorValue = 0;
 int leftCheckpointSensorValue = 0;
 int rightCheckpointSensorValue = 0;
+bool leftOnTape = true;
+bool rightOnTape = true;
+bool prevLeftOnTape = true;
+bool prevRightOnTape = false;
+int prevError = 0;
 
-boolean leftOnTape = true;
-boolean rightOnTape = true;
-boolean prevLeftOnTape = true;
-boolean prevRightOnTape = false;
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+#define OLED_RESET -1 // This display does not have a reset pin accessible
+Adafruit_SSD1306 display_handler(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-int motorDefaultPower = 255; 	// duty cycle fraction out of 255. Manual setting for testing only.
+
+// put function declarations here:
+void updateTapeSensors();
+void tapeFollowing();
+void steeringControl(double steeringAngleDeg);
+void motorControl(double lMotorPower, double rMotorPower);
+
+void setup() {
+	pinMode(PIN_TAPE_SENSOR_LEFT, INPUT);
+	pinMode(PIN_TAPE_SENSOR_RIGHT, INPUT);
+	pinMode(PIN_CHECKPOINT_SENSOR_LEFT, INPUT);
+	pinMode(PIN_CHECKPOINT_SENSOR_RIGHT, INPUT);
+	
+	pinMode(PIN_LMOTOR_FWD, OUTPUT);
+	pinMode(PIN_LMOTOR_REV, OUTPUT);
+	pinMode(PIN_RMOTOR_FWD, OUTPUT);
+	pinMode(PIN_RMOTOR_REV, OUTPUT);
+
+	pinMode(PIN_STEERING_SERVO, OUTPUT);
+	
+  	// for testing, add an assertions check to make sure all variables remain in range. (Basically implementing a rep invariant checker.)
+  	// default testing:
+	display_handler.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+	delay(2000);
+	display_handler.clearDisplay();
+	display_handler.setTextSize(1);
+	display_handler.setTextColor(SSD1306_WHITE);
+	display_handler.setCursor(0,0);
+  	motorControl(POWER_SCALE, POWER_SCALE);
+}
+
+void loop() {
+  	tapeFollowing();
+  	return;
+}
 
 /*
  * Tape following error determination from reflectance sensors
@@ -78,13 +85,13 @@ int motorDefaultPower = 255; 	// duty cycle fraction out of 255. Manual setting 
  * Negative error means we are to the left, and positive error to the right
  */
 void updateTapeSensors() {
-  int leftTapeSensorValue = analogRead(PIN_TAPE_SENSOR_LEFT);
-  int rightTapeSensorValue = analogRead(PIN_TAPE_SENSOR_RIGHT);
-  int leftCheckpointSensorValue = analogRead(PIN_CHECKPOINT_SENSOR_LEFT);
-  int rightCheckpointSensorValue = analogRead(PIN_CHECKPOINT_SENSOR_RIGHT);
-  
-  leftOnTape = leftTapeSensorValue > TAPE_SENSOR_THRESHOLD;
-  rightOnTape = rightTapeSensorValue > TAPE_SENSOR_THRESHOLD;
+	leftTapeSensorValue = analogRead(PIN_TAPE_SENSOR_LEFT);
+	rightTapeSensorValue = analogRead(PIN_TAPE_SENSOR_RIGHT);
+	leftCheckpointSensorValue = analogRead(PIN_CHECKPOINT_SENSOR_LEFT);
+	rightCheckpointSensorValue = analogRead(PIN_CHECKPOINT_SENSOR_RIGHT);
+	
+	leftOnTape = leftTapeSensorValue > TAPE_SENSOR_THRESHOLD;
+	rightOnTape = rightTapeSensorValue > TAPE_SENSOR_THRESHOLD;
 }
 
 /*
@@ -93,89 +100,111 @@ void updateTapeSensors() {
  */
 
 void tapeFollowing() {
-	int INTERSECTION_SENSOR_VALUE = 900;	// out of 1024, set this to the value where both sensors are the same (define as exact middle of tape)
+	const int LOOP_TIME_MILLIS = 60;
+	int nextLoopTime = millis() + LOOP_TIME_MILLIS;
 	// Adjust steering to avoid twitching on turns, or is what we have fine? (May use current steering position as reference, or maybe perform smoothing. Google?)
 	while (true) {
 		updateTapeSensors();
 		bool leftOnTape = leftTapeSensorValue > TAPE_SENSOR_THRESHOLD;
 		bool rightOnTape = rightTapeSensorValue > TAPE_SENSOR_THRESHOLD;
 		
-		double maxNormalSteeringAngle = 45;	// degrees
-		double maxSteeringAngle = 45; // degrees
-		double offTapeSpeed = 128;	// out of 255
+		double maxNormalSteeringAngle = 45.0;	// degrees
+		double maxSteeringAngle = 45.0; // degrees
 		
-		if (leftCheckpointSensorValue > CHECKPOINT_SENSOR_THRESHOLD || rightCheckpointSensorValue > CHECKPOINT_SENSOR_THRESHOLD) {
-			break;	// continue previous execution
-		}
+//		if (leftCheckpointSensorValue > CHECKPOINT_SENSOR_THRESHOLD || rightCheckpointSensorValue > CHECKPOINT_SENSOR_THRESHOLD) {
+//			break;	// continue previous execution
+//		}
 		
 		// Define error to right, right steering as +
 		double steeringAngle;
 		int leftMotorPower;
 		int rightMotorPower;
+		int error = 9999;
 		if (leftOnTape && rightOnTape) {
 			// define error as the deviation of the minimum sensor value from its value when centered on the tape
-			int error;
-			if (leftTapeSensorValue < rightTapeSensorValue) {
-				error = max(0, INTERSECTION_SENSOR_VALUE - leftTapeSensorValue);
-			} else {
-				error = min(0, rightTapeSensorValue - INTERSECTION_SENSOR_VALUE);
+			// so positive error to right of tape
+			// and 
+			if (leftTapeSensorValue < rightTapeSensorValue) {	// to left of centerline
+				error = min(0, leftTapeSensorValue - TAPE_SENSOR_INTERSECTION_VALUE);
+			} else {	// to right of centerline
+				error = max(0, TAPE_SENSOR_INTERSECTION_VALUE - rightTapeSensorValue);
 			}
-			steeringAngle = - STEERING_KP * error;
-			// Calculate appropriate differential by inferring turning circle from steering angle, wheelbase, and wheel width
-			leftMotorPower = motorDefaultPower;
-			rightMotorPower = motorDefaultPower;
+			// Difference method: error = leftTapeSensorValue - rightTapeSensorValue
+			steeringAngle = STEERING_KP * error + STEERING_KD * (error - prevError) / LOOP_TIME_MILLIS;
+			// Calculate appropriate differential by inferring turning circle from steering angle, wheelbase, and wheel width later on
+			leftMotorPower = POWER_SCALE;
+			rightMotorPower = POWER_SCALE;
 		} else if (leftOnTape) {	// we are far to the right!
 			steeringAngle = - maxNormalSteeringAngle;
-			leftMotorPower = (int) (0.8 * motorDefaultPower);
-			rightMotorPower = motorDefaultPower;
+			leftMotorPower =  0.9 * POWER_SCALE;
+			rightMotorPower = POWER_SCALE;
 		} else if (rightOnTape) {	// we are far to the left!
 			steeringAngle = maxNormalSteeringAngle;
-			leftMotorPower = motorDefaultPower;
-			rightMotorPower = (int) (0.8 * motorDefaultPower);
+			leftMotorPower = POWER_SCALE;
+			rightMotorPower = 0.9 * POWER_SCALE;
 		} else {	// completely off tape. Refer to previous state and use differential steering.
 			// Write a motor to 0 and continue detection
 			if (prevLeftOnTape) {
 				steeringAngle = - maxSteeringAngle;
 				leftMotorPower = 0;
-				rightMotorPower = (0.8 * motorDefaultPower);
+				rightMotorPower = 0.8 * POWER_SCALE;
 			} else {
 				steeringAngle = maxSteeringAngle;
-				leftMotorPower = 150;
-				rightMotorPower = (0.8 * motorDefaultPower);
+				leftMotorPower = 0;
+				rightMotorPower = 0.8 * POWER_SCALE;
 			}
-			break;
 		}
 		
-		int servo_pos = 90 + 2 * steering_angle;
-		steeringServo.write(servo_pos);	
-		// Write duty cycle to appropriate H-bridge
-		motorControl(lMotorPower, rMotorPower);
+		steeringControl(steeringAngle);
+		motorControl(leftMotorPower, rightMotorPower);
 		prevLeftOnTape = leftOnTape;
 		prevRightOnTape = rightOnTape;
+
+		display_handler.clearDisplay();
+		display_handler.setCursor(0, 0);
+		display_handler.printf("L: %4d  R: %4d\n", leftTapeSensorValue, rightTapeSensorValue);
+		display_handler.printf("Dif: %5d   Error: %5d\n", rightTapeSensorValue - leftTapeSensorValue, error);
+		display_handler.printf("LMotor: %.3f   RMotor: %.3f\n", leftMotorPower, rightMotorPower);
+		display_handler.printf("Steering angle: %5.1f\n", steeringAngle);
+		display_handler.printf("Spare time: %d", nextLoopTime - millis());
+
+		while (millis() < nextLoopTime);	// pause until next scheduled control loop
+		nextLoopTime += LOOP_TIME_MILLIS;
 	}
 }
 
+void steeringControl(double steeringAngleDeg) {
+	// Assuming Ackerman steering geometry and right wheel direct drive. (Gear ratio???)
+	if (abs(steeringAngleDeg) < 1.0) {
+		pwm_start(PIN_STEERING_SERVO, 50, 1500, TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
+	}
+	double turnRadius = WHEELBASE / tan(steeringAngleDeg * PI / 180);	// trigonometry methods are by default in radians, so convert to rad
+	double rightWheelAngle = (atan(WHEELBASE / (turnRadius - WHEELSEP/2))) * 180 / PI;	// servo write is in degrees, so convert back to deg
+	pwm_start(PIN_STEERING_SERVO, 50, 1500 + (int) ((1000/90.0) * rightWheelAngle), TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
+}
+
+// lMotorPower, rMotorPower between 0 and 1
 // Add smoothing: don't change unless new motor powers are far enough from previous powers. (Greater dist -> shorter time). 
-void motorControl(int lMotorPower, int rMotorPower) {	// replace with left, right; and refactor global variable with underscore
+void motorControl(double lMotorPower, double rMotorPower) {	// replace with left, right; and refactor global variable with underscore
 	if (lMotorPower > 0) {
-		analogWrite(PIN_LMOTOR_REV, 0);
-		analogWrite(PIN_LMOTOR_FWD, lMotorPower);
+		pwm_stop(PIN_LMOTOR_REV);
+		pwm_start(PIN_LMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else if (lMotorPower < 0) {
-		analogWrite(PIN_LMOTOR_FWD, 0);
-		analogWrite(PIN_LMOTOR_REV, -lMotorPower);
+		pwm_stop(PIN_LMOTOR_FWD);
+		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, (int) (1023 * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else {
-		analogWrite(PIN_LMOTOR_FWD, 0);
-		analogWrite(PIN_LMOTOR_REV, 0);
+		pwm_stop(PIN_LMOTOR_FWD);
+		pwm_stop(PIN_LMOTOR_REV);
 	}
 
 	if (rMotorPower > 0) {
-		analogWrite(PIN_RMOTOR_REV, 0);
-		analogWrite(PIN_RMOTOR_FWD, lMotorPower);
-	} else if (lMotorPower < 0) {
-		analogWrite(PIN_RMOTOR_FWD, 0);
-		analogWrite(PIN_RMOTOR_REV, -lMotorPower);
+		pwm_stop(PIN_RMOTOR_REV);
+		pwm_start(PIN_RMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
+	} else if (rMotorPower < 0) {
+		pwm_stop(PIN_RMOTOR_FWD);
+		pwm_start(PIN_RMOTOR_REV, MOTOR_PWM_FREQ, (int) (1023 * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else {
-		analogWrite(PIN_RMOTOR_FWD, 0);
-		analogWrite(PIN_RMOTOR_REV, 0);
-	}		
+		pwm_stop(PIN_RMOTOR_FWD);
+		pwm_stop(PIN_RMOTOR_REV);
+	}
 }
