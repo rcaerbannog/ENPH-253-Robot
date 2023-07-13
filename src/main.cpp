@@ -190,12 +190,16 @@ void tapeFollowing() {
 
 void steeringControl(double steeringAngleDeg) {
 	// Assuming Ackerman steering geometry and right wheel direct drive. (Gear ratio???)
-	if (abs(steeringAngleDeg) < 1.0) {
+	double rightWheelAngle = 0;
+	if (abs(steeringAngleDeg) > 1.0) {
 		pwm_start(PIN_STEERING_SERVO, 50, 1500, TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
 	}
 	double turnRadius = WHEELBASE / tan(steeringAngleDeg * PI / 180);	// trigonometry methods are by default in radians, so convert to rad
-	double rightWheelAngle = (atan(WHEELBASE / (turnRadius - WHEELSEP/2))) * 180 / PI;	// servo write is in degrees, so convert back to deg
+	rightWheelAngle = (atan(WHEELBASE / (turnRadius - WHEELSEP/2))) * 180 / PI;	// servo write is in degrees, so convert back to deg
 	pwm_start(PIN_STEERING_SERVO, 50, 1500 + (int) ((1000/90.0) * rightWheelAngle), TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
+	display_handler.print("R wheel: ");
+	display_handler.print(rightWheelAngle, 1);
+	display_handler.display();
 }
 
 // lMotorPower, rMotorPower between 0 and 1
