@@ -173,7 +173,7 @@ void tapeFollowing() {
 		
 		display_handler.clearDisplay();
 		display_handler.setCursor(0, 0);
-		display_handler.printf("Spare time: %d", nextLoopTime - millis());
+		display_handler.printf("Spare time: %d\n", nextLoopTime - millis());
 		display_handler.printf("L: %4d  R: %4d\nError: %4d\n", leftTapeSensorValue, rightTapeSensorValue, error);
 		display_handler.print("LMotor: ");
 		display_handler.println(leftMotorPower, 3);
