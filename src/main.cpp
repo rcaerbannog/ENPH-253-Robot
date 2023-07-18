@@ -59,12 +59,15 @@ double prevDerivativeError = 0;	// from previous control loop, used for state re
 #define OLED_RESET -1 // This display does not have a reset pin accessible
 Adafruit_SSD1306 display_handler(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
+double debugRightWheelAngle = 0;
+
 
 // put function declarations here:
 
 void writeToDisplay(const char *str);
 void updateTapeSensors();
 void tapeFollowing();
+double differentialFromSteering(double steeringAngleDeg);
 void steeringControl(double steeringAngleDeg);
 void motorControl(double lMotorPower, double rMotorPower);
 
@@ -193,29 +196,34 @@ void tapeFollowing() {
 			} else {
 				steeringAngleDeg = STEERING_KP * error;
 			}
-			steeringAngleDeg = min(steeringAngleDeg, maxSteeringAngleDeg);
-			steeringAngleDeg = max(steeringAngleDeg, -maxSteeringAngleDeg);
 			
 			// Calculate appropriate differential by inferring turning circle from steering angle, wheelbase, and wheel width later on
-			leftMotorPower = POWER_SCALE;
-			rightMotorPower = POWER_SCALE;
+			if (steeringAngleDeg >= 0) {	// steering to left/CCW, left wheel is inner wheel
+				steeringAngleDeg = min(steeringAngleDeg, maxNormalSteeringAngleDeg);
+				leftMotorPower = differentialFromSteering(steeringAngleDeg);
+				rightMotorPower = 1.0;
+			} else {
+				steeringAngleDeg = max(steeringAngleDeg, -maxNormalSteeringAngleDeg);
+				leftMotorPower = 1.0;
+				rightMotorPower = differentialFromSteering(steeringAngleDeg);
+			}
 		} else if (leftOnTape) {	// We are far to the right, and want to turn left! The right sensor is off the tape.
 			steeringAngleDeg = maxNormalSteeringAngleDeg;
-			leftMotorPower =  0.9 * POWER_SCALE;
-			rightMotorPower = POWER_SCALE;
+			leftMotorPower =  0.9 * differentialFromSteering(steeringAngleDeg);
+			rightMotorPower = 0.9;
 		} else if (rightOnTape) {	// we are far to the left, and want to turn right! The left sensor is off the tape.
 			steeringAngleDeg = - maxNormalSteeringAngleDeg;
-			leftMotorPower = POWER_SCALE;
-			rightMotorPower = 0.9 * POWER_SCALE;
+			leftMotorPower = 0.9;
+			rightMotorPower = 0.9 * differentialFromSteering(steeringAngleDeg);
 		} else {	// Both sensors are completely off the tape! Refer to previous state and use differential steering.
 			if (prevLeftOnTape) {	// We went completely off to the right! The left sensor was the last to come off the tape.
 				steeringAngleDeg = maxSteeringAngleDeg;
 				leftMotorPower = 0;
-				rightMotorPower = 0.8 * POWER_SCALE;
+				rightMotorPower = 0.7;
 			} else {	// We went completely off to the left! The right sensor was the last to come off the tape.
 				steeringAngleDeg = -maxSteeringAngleDeg;
-				leftMotorPower = 0;
-				rightMotorPower = 0.8 * POWER_SCALE;
+				leftMotorPower = 0.7;
+				rightMotorPower = 0;
 			}
 		}
 
@@ -250,6 +258,20 @@ void tapeFollowing() {
 	}
 }
 
+/*
+ * @param steeringAngleDeg The 'ideal steering angle' TO THE LEFT (CCW) from an imaginary front wheel on the chassis centerline.
+ * @return The differential speed ratio of the innter (slower) back wheel to the outer (faster) wheel for this steering angle. 
+ * 			Between -1 and 1: 1 for same direction and -1 for opposite direction
+ * 			Infer which wheel is inner one from sign of passed in parameter steeringAngleDeg 
+*/
+double differentialFromSteering(double steeringAngleDeg) {
+	if (abs(steeringAngleDeg) < 1.0) {
+		return 0;
+	}
+	double turnRadius = abs(WHEELBASE / tan(steeringAngleDeg * PI / 180));
+	double differential = (turnRadius - WHEELSEP / 2) / (turnRadius + WHEELSEP / 2);
+	return differential;
+}
 
 /*
  * Commands the servo to move the steering system to the ideal steering angle.
@@ -264,8 +286,7 @@ void tapeFollowing() {
  * 
  * REQUIRES as little backlash in the steering system as possible! (This means tight fits on axles and gears.)
  * 
- * @param steeringAngleDeg The 'ideal steering angle' from an imaginary front wheel on the chassis centerline.
- * //@return The differential speed ratio required of the two back wheels for this steering angle.  
+ * @param steeringAngleDeg The 'ideal steering angle' TO THE LEFT (CCW) from an imaginary front wheel on the chassis centerline.
 */
 void steeringControl(double steeringAngleDeg) {
 	const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 us. 
@@ -274,15 +295,16 @@ void steeringControl(double steeringAngleDeg) {
 		pwm_start(PIN_STEERING_SERVO, 50, 1500, TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
 	}
 	double turnRadius = WHEELBASE / tan(steeringAngleDeg * PI / 180);	// trigonometry methods are by default in radians, so convert to rad
-	rightWheelAngle = (atan(WHEELBASE / (turnRadius - WHEELSEP/2))) * 180 / PI;	// servo write is in degrees, so convert back to deg
+	rightWheelAngle = (atan(WHEELBASE / (turnRadius + WHEELSEP/2))) * 180 / PI;	// servo write is in degrees, so convert back to deg	
 	// Servo response is linear with 90 degrees rotation to 1000us pulse width (empirical testing of MG90, MG996R)
 	pwm_start(PIN_STEERING_SERVO, 50, SERVO_NEUTRAL_PULSEWIDTH + (int) ((1000/90.0) * rightWheelAngle), 
 		TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
-	
+
+	debugRightWheelAngle = rightWheelAngle;
 }
 
 /*
- * Sends power to the motor by modulating power through the H-bridges.
+ * Sends power to the motor by modulating power through the H-bridges. Scales power by global constant POWER_SCALE.
  * (Current implementation: via the gate drivers.)
  * 
  * IDEAS FOR IMPROVEMENT:
@@ -298,10 +320,10 @@ void steeringControl(double steeringAngleDeg) {
 void motorControl(double lMotorPower, double rMotorPower) {
 	if (lMotorPower > 0) {	// forwards
 		pwm_stop(PIN_LMOTOR_REV);
-		pwm_start(PIN_LMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
+		pwm_start(PIN_LMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * POWER_SCALE * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else if (lMotorPower < 0) {	// reverse
 		pwm_stop(PIN_LMOTOR_FWD);
-		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, (int) (1023 * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
+		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, (int) (1023 * POWER_SCALE * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else {	// unpowered / stop
 		pwm_stop(PIN_LMOTOR_FWD);
 		pwm_stop(PIN_LMOTOR_REV);
@@ -309,10 +331,10 @@ void motorControl(double lMotorPower, double rMotorPower) {
 
 	if (rMotorPower > 0) {	// forwards
 		pwm_stop(PIN_RMOTOR_REV);
-		pwm_start(PIN_RMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
+		pwm_start(PIN_RMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * POWER_SCALE * rMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else if (rMotorPower < 0) {	// reverse
 		pwm_stop(PIN_RMOTOR_FWD);
-		pwm_start(PIN_RMOTOR_REV, MOTOR_PWM_FREQ, (int) (1023 * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
+		pwm_start(PIN_RMOTOR_REV, MOTOR_PWM_FREQ, (int) (1023 * POWER_SCALE * rMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else {	// unpowered / stop
 		pwm_stop(PIN_RMOTOR_FWD);
 		pwm_stop(PIN_RMOTOR_REV);
