@@ -26,9 +26,10 @@
  */
 const double WHEELBASE = 200;	// In mm, Lengthwise distance between front and rear wheel axles
 const double WHEELSEP = 70;	// In mm, Widthwise distance between front wheels
-const int TAPE_SENSOR_SETPOINT = 900;	// The analogRead() value when both tape sensors read the same (centered on tape)
-const int TAPE_SENSOR_THRESHOLD = 500;	// The analogRead() value above which we consider the tape sensor to be on tape
-const int CHECKPOINT_SENSOR_THRESHOLD = 500;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
+const int TAPE_SENSOR_SETPOINT = 800;	// The analogRead() value when both tape sensors read the same (centered on tape)
+const int TAPE_SENSOR_THRESHOLD = 250;	// The analogRead() value above which we consider the tape sensor to be on tape
+// Make the checkpoint sensors deliberately less sensitive to light -> more sensitive to being off tape?
+const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
 const double STEERING_KP = 0.1;	// Steering angle PID proportionality constant
 const double STEERING_KD = 0.0;	// Steering angle PID derivative constant, time derivative unit milliseconds 
 double POWER_SCALE = 1.00; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
@@ -45,11 +46,13 @@ int leftTapeSensorValue = 0;	// by analogRead(); lower is further from tape
 int rightTapeSensorValue = 0;	// by analogRead(); lower is further from tape
 int leftCheckpointSensorValue = 0; // by analogRead(); lower is further from tape
 int rightCheckpointSensorValue = 0; // by analogRead(); lower is further from tape
-bool leftOnTape = true; // leftTapeSensorValue above TAPE_SENSOR_INTERSECTION_THRESHOLD
-bool rightOnTape = true; // rightTapeSensorValue above TAPE_SENSOR_INTERSECTION_THRESHOLD
+bool leftOnTape = true; // leftTapeSensorValue above TAPE_SENSOR_THRESHOLD
+bool rightOnTape = true; // rightTapeSensorValue above TAPE_SENSOR_THRESHOLD
 bool prevLeftOnTape = true;	// in case of leaving tape entirely
-bool prevRightOnTape = false;	// in case of leaving tape entirely
+bool prevRightOnTape = true;	// in case of leaving tape entirely
+bool onCheckpoint = false;	// leftCheckPointSensorValue or rightCheckpointSensorValue above CHECKPOINT_SENSOR_THRESHOLD
 int prevError = 0;	// from previous control loop, used for derivative control only if prevLeftOnTape and prevRightOnTape.
+double prevDerivativeError = 0;	// from previous control loop, used for state recovery in case of checkpoint
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
@@ -127,6 +130,26 @@ void updateTapeSensors() {
  * Note: current LOOP_TIME_MILLIS is synchronized to multiple of servo and motor PWM period.
  */
 void tapeFollowing() {
+	/* 
+	We assume the checkpoint sensors can see the tape just before and after the main sensors.
+	Consider possibility of checkpoint if left or right checkpoint sensor above threshold.
+	Then freeze current AND previous state, as this will otherwise be destroyed going over the checkpoint.
+	(Rainbow road doesn't change reflectance at current sensitivity, so no false activation there.)
+	CASES
+	Case 1: Only a checkpoint sensor sees tape. Then continue locking max steering angle.
+		We are certainly still off-tape in the same direction. So this is the correct response anyways.
+		Includes Case 1a: Both checkpoint sensors see tape. 
+	Case 2: A checkpoint sensor sees tape AND so does a line sensor, then lock the steering straight and hope this passes.
+		If we were on tape before, then we are probably still
+		If we were off tape, then the tape sensors may be seeing the line or checkpoint (or intersection of cross).
+		If checkpoint, just lock steering for a bit.  
+	Case 3: Only a line sensor sees tape. Then steer using normal PID control.
+		Maybe we just got spooked a little bit. This will soon pass.
+
+	If was on tape and went off, maybe recover state by derivative of error wrt time?
+
+	*/
+
 	const int LOOP_TIME_MILLIS = 20;	// Control loop period. Must be enough time for the code inside to execute!
 	const double maxNormalSteeringAngleDeg = 45.0;	// degrees; for one sensor off tape
 	const double maxSteeringAngleDeg = 45.0; // degrees; for both sensors off tape
@@ -136,18 +159,24 @@ void tapeFollowing() {
 	while (true) {
 		digitalWrite(PIN_LED_BUILTIN, HIGH);	// DEBUG ONLY, for monitoring control loop progression without LCD display
 		updateTapeSensors();
-		leftOnTape = leftTapeSensorValue > TAPE_SENSOR_THRESHOLD;
-		rightOnTape = rightTapeSensorValue > TAPE_SENSOR_THRESHOLD;
-		
+
 		//if (leftCheckpointSensorValue > CHECKPOINT_SENSOR_THRESHOLD || rightCheckpointSensorValue > CHECKPOINT_SENSOR_THRESHOLD) {
 		//	break;	// continue previous execution
 		//}
 		
 		int error = UNDEFINED;	// Unitless; Positive error means to right of tape, negative to left
+		double dError = 0;
 		double steeringAngleDeg; // In degrees; Positive angle means steering to left (CCW circling)
 		double leftMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
 		double rightMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
 		
+		if (onCheckpoint) {
+			// may have to invalidate derivative of next loop, but probably not necessary
+			// checkpoint recovery in case of on tape -> completely off tape? (hopefully impossible)
+			nextLoopTime = millis();
+			continue;	// hold previous course of action. Change this if it causes problems to case-specific decision making.
+		}
+
 		if (leftOnTape && rightOnTape) {
 			// Use PID from reflectance sensor-determined error
 			// ERROR IS DEFINED HERE! Can replace with different method of calculating error. (e.g. difference, or more sensors)
@@ -159,10 +188,13 @@ void tapeFollowing() {
 			// Difference method: error = leftTapeSensorValue - rightTapeSensorValue
 			// Only use derivative term if previous error is not UNDEFINED (both sensors were on tape)
 			if (prevLeftOnTape && prevRightOnTape) {
-				steeringAngleDeg = STEERING_KP * error + STEERING_KD * (error - prevError) / LOOP_TIME_MILLIS;
+				dError = (error - prevError) / (double) LOOP_TIME_MILLIS;
+				steeringAngleDeg = STEERING_KP * error + STEERING_KD * dError;
 			} else {
 				steeringAngleDeg = STEERING_KP * error;
 			}
+			steeringAngleDeg = min(steeringAngleDeg, maxSteeringAngleDeg);
+			steeringAngleDeg = max(steeringAngleDeg, -maxSteeringAngleDeg);
 			
 			// Calculate appropriate differential by inferring turning circle from steering angle, wheelbase, and wheel width later on
 			leftMotorPower = POWER_SCALE;
@@ -190,16 +222,17 @@ void tapeFollowing() {
 		steeringControl(steeringAngleDeg);
 		motorControl(leftMotorPower, rightMotorPower);
 
-		if (leftOnTape || rightOnTape) {	// Update previous state in case we go off tape
+		if (!onCheckpoint && (leftOnTape || rightOnTape)) {	// Update previous state in case we go off tape
 			prevLeftOnTape = leftOnTape;
 			prevRightOnTape = rightOnTape;
 			prevError = error;
+			prevDerivativeError = dError;
 		}
 
 		digitalWrite(PIN_LED_BUILTIN, LOW);
 		// COMMENT OUT DEBUG DISPLAY CODE IF THERE IS NO DISPLAY, OTHERWISE EXECUTION WILL STALL
 		// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
-		/* 
+		
 		display_handler.printf("Loop time: %d\n", nextLoopTime-millis());
 		display_handler.clearDisplay();
 		display_handler.setCursor(0, 0);
@@ -211,7 +244,7 @@ void tapeFollowing() {
 		display_handler.print("Steering angle: ");
 		display_handler.println(steeringAngleDeg, 1);
 		display_handler.display();
-		*/
+		
 		while (millis() < nextLoopTime);	// pause until next scheduled control loop, to ensure consistent loop time
 		nextLoopTime = millis() + LOOP_TIME_MILLIS;
 	}
@@ -232,11 +265,12 @@ void tapeFollowing() {
  * REQUIRES as little backlash in the steering system as possible! (This means tight fits on axles and gears.)
  * 
  * @param steeringAngleDeg The 'ideal steering angle' from an imaginary front wheel on the chassis centerline.
+ * //@return The differential speed ratio required of the two back wheels for this steering angle.  
 */
 void steeringControl(double steeringAngleDeg) {
 	const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 us. 
 	double rightWheelAngle = 0;
-	if (abs(steeringAngleDeg) > 1.0) {
+	if (abs(steeringAngleDeg) < 1.0) {
 		pwm_start(PIN_STEERING_SERVO, 50, 1500, TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
 	}
 	double turnRadius = WHEELBASE / tan(steeringAngleDeg * PI / 180);	// trigonometry methods are by default in radians, so convert to rad
@@ -244,6 +278,7 @@ void steeringControl(double steeringAngleDeg) {
 	// Servo response is linear with 90 degrees rotation to 1000us pulse width (empirical testing of MG90, MG996R)
 	pwm_start(PIN_STEERING_SERVO, 50, SERVO_NEUTRAL_PULSEWIDTH + (int) ((1000/90.0) * rightWheelAngle), 
 		TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
+	
 }
 
 /*
