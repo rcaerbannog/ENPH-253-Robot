@@ -5,8 +5,8 @@
 // PIN DEFINITIONS
 #define PIN_TAPE_SENSOR_LEFT PA4	// as analog voltage reading
 #define PIN_TAPE_SENSOR_RIGHT PA5	// as analog voltage reading
-#define PIN_CHECKPOINT_SENSOR_LEFT PA12	// as analog voltage reading
-#define PIN_CHECKPOINT_SENSOR_RIGHT PA15	// as analog voltage reading
+#define PIN_CHECKPOINT_SENSOR_LEFT PA2	// as analog voltage reading
+#define PIN_CHECKPOINT_SENSOR_RIGHT PA1	// as analog voltage reading
 #define PIN_STEERING_SERVO PA_6	// as PWM output - servo control
 
 // Motor pins originally PB6-9, but this interferes with LCD screen for debugging.
@@ -34,6 +34,9 @@ const double STEERING_KP = 0.1;	// Steering angle PID proportionality constant
 const double STEERING_KD = 0.0;	// Steering angle PID derivative constant, time derivative unit milliseconds 
 double POWER_SCALE = 1.00; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 const int MOTOR_PWM_FREQ = 50;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
+const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 us. 
+const int STEERING_SERVO_DIRECTION_SIGN = -1;	// Sign variable, +1 or -1. Switches servo direction in case the mounting direction is flipped.
+
 /*
 Note: Motor PWM frequency cannot be too high, else gate driver turn-on time 
 (~400us, inverted exponential decay voltage increase from high capacitance) significantly reduces motor power.
@@ -96,7 +99,6 @@ void setup() {
 	display_handler.setTextColor(SSD1306_WHITE);
 
 	writeToDisplay("Either there is no display code after startup, or the program froze before completing a control loop.");
-  	motorControl(POWER_SCALE, POWER_SCALE);
 }
 
 void loop() {
@@ -162,6 +164,8 @@ void tapeFollowing() {
 	while (true) {
 		digitalWrite(PIN_LED_BUILTIN, HIGH);	// DEBUG ONLY, for monitoring control loop progression without LCD display
 		updateTapeSensors();
+		leftOnTape = leftTapeSensorValue > TAPE_SENSOR_THRESHOLD;
+		rightOnTape = rightTapeSensorValue > TAPE_SENSOR_THRESHOLD;
 
 		//if (leftCheckpointSensorValue > CHECKPOINT_SENSOR_THRESHOLD || rightCheckpointSensorValue > CHECKPOINT_SENSOR_THRESHOLD) {
 		//	break;	// continue previous execution
@@ -241,9 +245,11 @@ void tapeFollowing() {
 		// COMMENT OUT DEBUG DISPLAY CODE IF THERE IS NO DISPLAY, OTHERWISE EXECUTION WILL STALL
 		// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
 		
-		display_handler.printf("Loop time: %d\n", nextLoopTime-millis());
+		//display_handler.printf("Loop time: %d\n", nextLoopTime-millis());
 		display_handler.clearDisplay();
 		display_handler.setCursor(0, 0);
+		display_handler.print("Checkpoint: ");
+		display_handler.println(onCheckpoint);
 		display_handler.printf("L: %4d  R: %4d\nError: %4d\n", leftTapeSensorValue, rightTapeSensorValue, error);
 		display_handler.print("LMotor: ");
 		display_handler.println(leftMotorPower, 3);
@@ -251,6 +257,8 @@ void tapeFollowing() {
 		display_handler.println(rightMotorPower, 3);
 		display_handler.print("Steering angle: ");
 		display_handler.println(steeringAngleDeg, 1);
+		display_handler.print("R steer angle: ");
+		display_handler.print(debugRightWheelAngle, 1);
 		display_handler.display();
 		
 		while (millis() < nextLoopTime);	// pause until next scheduled control loop, to ensure consistent loop time
@@ -289,15 +297,14 @@ double differentialFromSteering(double steeringAngleDeg) {
  * @param steeringAngleDeg The 'ideal steering angle' TO THE LEFT (CCW) from an imaginary front wheel on the chassis centerline.
 */
 void steeringControl(double steeringAngleDeg) {
-	const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 us. 
 	double rightWheelAngle = 0;
 	if (abs(steeringAngleDeg) < 1.0) {
-		pwm_start(PIN_STEERING_SERVO, 50, 1500, TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
+		pwm_start(PIN_STEERING_SERVO, 50, SERVO_NEUTRAL_PULSEWIDTH, TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
 	}
 	double turnRadius = WHEELBASE / tan(steeringAngleDeg * PI / 180);	// trigonometry methods are by default in radians, so convert to rad
 	rightWheelAngle = (atan(WHEELBASE / (turnRadius + WHEELSEP/2))) * 180 / PI;	// servo write is in degrees, so convert back to deg	
 	// Servo response is linear with 90 degrees rotation to 1000us pulse width (empirical testing of MG90, MG996R)
-	pwm_start(PIN_STEERING_SERVO, 50, SERVO_NEUTRAL_PULSEWIDTH + (int) ((1000/90.0) * rightWheelAngle), 
+	pwm_start(PIN_STEERING_SERVO, 50, SERVO_NEUTRAL_PULSEWIDTH + (int) (STEERING_SERVO_DIRECTION_SIGN * (1000/90.0) * rightWheelAngle), 
 		TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
 
 	debugRightWheelAngle = rightWheelAngle;
@@ -318,25 +325,31 @@ void steeringControl(double steeringAngleDeg) {
  * @param rMotorPower Same for the right motor, between -1 and 1.
  */
 void motorControl(double lMotorPower, double rMotorPower) {
+	// if (lMotorPower == 0.0) {
+	// 	lMotorPower = 0.01;
+	// }
+	// if (rMotorPower == 0.0) {
+	// 	rMotorPower = 0.01;
+	// }
 	if (lMotorPower > 0) {	// forwards
-		pwm_stop(PIN_LMOTOR_REV);
+		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 		pwm_start(PIN_LMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * POWER_SCALE * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else if (lMotorPower < 0) {	// reverse
-		pwm_stop(PIN_LMOTOR_FWD);
+		pwm_start(PIN_LMOTOR_FWD, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, (int) (1023 * POWER_SCALE * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else {	// unpowered / stop
-		pwm_stop(PIN_LMOTOR_FWD);
-		pwm_stop(PIN_LMOTOR_REV);
+		pwm_start(PIN_LMOTOR_FWD, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
+		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 	}
 
 	if (rMotorPower > 0) {	// forwards
-		pwm_stop(PIN_RMOTOR_REV);
+		pwm_start(PIN_RMOTOR_REV, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 		pwm_start(PIN_RMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * POWER_SCALE * rMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else if (rMotorPower < 0) {	// reverse
-		pwm_stop(PIN_RMOTOR_FWD);
+		pwm_start(PIN_RMOTOR_FWD, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 		pwm_start(PIN_RMOTOR_REV, MOTOR_PWM_FREQ, (int) (1023 * POWER_SCALE * rMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else {	// unpowered / stop
-		pwm_stop(PIN_RMOTOR_FWD);
-		pwm_stop(PIN_RMOTOR_REV);
+		pwm_start(PIN_RMOTOR_FWD, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
+		pwm_start(PIN_RMOTOR_REV, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 	}
 }
