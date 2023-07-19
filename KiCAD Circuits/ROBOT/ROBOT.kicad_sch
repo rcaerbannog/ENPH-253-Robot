@@ -1,4 +1,4 @@
-(kicad_sch (version 20211123) (generator eeschema)
+(kicad_sch (version 20230121) (generator eeschema)
 
   (uuid 4c06c41c-9bca-4047-a966-bb339025bf70)
 
@@ -16,13 +16,13 @@
 
 
   (sheet (at 34.29 57.15) (size 20.32 8.89) (fields_autoplaced)
-    (stroke (width 0.1524) (type solid) (color 0 0 0 0))
+    (stroke (width 0.1524) (type solid))
     (fill (color 0 0 0 0.0000))
     (uuid 00f566c1-d8ca-4f41-9b53-ceec4a3d1976)
-    (property "Sheet name" "BuckInverterLP" (id 0) (at 34.29 56.4384 0)
+    (property "Sheetname" "BuckInverterLP" (at 34.29 56.4384 0)
       (effects (font (size 1.27 1.27)) (justify left bottom))
     )
-    (property "Sheet file" "BuckInverter.kicad_sch" (id 1) (at 34.29 66.6246 0)
+    (property "Sheetfile" "BuckInverter.kicad_sch" (at 34.29 66.6246 0)
       (effects (font (size 1.27 1.27)) (justify left top))
     )
     (pin "OUT-" output (at 54.61 64.77 0)
@@ -41,16 +41,21 @@
       (effects (font (size 1.27 1.27)) (justify right))
       (uuid 87f60cda-899b-48d0-a1b0-33ac4be45aa4)
     )
+    (instances
+      (project "ROBOT"
+        (path "/4c06c41c-9bca-4047-a966-bb339025bf70" (page "5"))
+      )
+    )
   )
 
   (sheet (at 129.54 92.71) (size 35.56 13.97) (fields_autoplaced)
-    (stroke (width 0.1524) (type solid) (color 0 0 0 0))
+    (stroke (width 0.1524) (type solid))
     (fill (color 0 0 0 0.0000))
     (uuid 45209329-3c21-4499-98c2-a8f6fdbddd03)
-    (property "Sheet name" "IR BEAM DETECTION" (id 0) (at 129.54 91.9984 0)
+    (property "Sheetname" "IR BEAM DETECTION" (at 129.54 91.9984 0)
       (effects (font (size 1.27 1.27)) (justify left bottom))
     )
-    (property "Sheet file" "IRBEAM.kicad_sch" (id 1) (at 129.54 107.2646 0)
+    (property "Sheetfile" "IRBEAM.kicad_sch" (at 129.54 107.2646 0)
       (effects (font (size 1.27 1.27)) (justify left top))
     )
     (pin "BP A-Pin" output (at 165.1 96.52 0)
@@ -69,28 +74,38 @@
       (effects (font (size 1.27 1.27)) (justify left))
       (uuid 86b61544-803f-4c31-ba64-912cfe99c9e5)
     )
+    (instances
+      (project "ROBOT"
+        (path "/4c06c41c-9bca-4047-a966-bb339025bf70" (page "3"))
+      )
+    )
   )
 
   (sheet (at 191.77 91.44) (size 29.21 15.24) (fields_autoplaced)
-    (stroke (width 0.1524) (type solid) (color 0 0 0 0))
+    (stroke (width 0.1524) (type solid))
     (fill (color 0 0 0 0.0000))
     (uuid 8a0bf8b7-9991-4645-b3e6-8b8ff718cf85)
-    (property "Sheet name" "H-Bridge" (id 0) (at 191.77 90.7284 0)
+    (property "Sheetname" "H-Bridge" (at 191.77 90.7284 0)
       (effects (font (size 1.27 1.27)) (justify left bottom))
     )
-    (property "Sheet file" "H-Bridge.kicad_sch" (id 1) (at 191.77 107.2646 0)
+    (property "Sheetfile" "H-Bridge.kicad_sch" (at 191.77 107.2646 0)
       (effects (font (size 1.27 1.27)) (justify left top))
+    )
+    (instances
+      (project "ROBOT"
+        (path "/4c06c41c-9bca-4047-a966-bb339025bf70" (page "2"))
+      )
     )
   )
 
   (sheet (at 73.66 54.61) (size 21.59 13.97) (fields_autoplaced)
-    (stroke (width 0.1524) (type solid) (color 0 0 0 0))
+    (stroke (width 0.1524) (type solid))
     (fill (color 0 0 0 0.0000))
     (uuid a4186a1b-ac1b-4531-9771-5db1c40f1c7a)
-    (property "Sheet name" "Low Power circuitry" (id 0) (at 73.66 53.8984 0)
+    (property "Sheetname" "Low Power circuitry" (at 73.66 53.8984 0)
       (effects (font (size 1.27 1.27)) (justify left bottom))
     )
-    (property "Sheet file" "LPcircuitry.kicad_sch" (id 1) (at 73.66 69.1646 0)
+    (property "Sheetfile" "LPcircuitry.kicad_sch" (at 73.66 69.1646 0)
       (effects (font (size 1.27 1.27)) (justify left top))
     )
     (pin "+3.3V" output (at 95.25 63.5 0)
@@ -117,85 +132,51 @@
       (effects (font (size 1.27 1.27)) (justify right))
       (uuid c586b4b7-54cf-491d-bea1-a35dfd2f414b)
     )
+    (instances
+      (project "ROBOT"
+        (path "/4c06c41c-9bca-4047-a966-bb339025bf70" (page "4"))
+      )
+    )
+  )
+
+  (sheet (at 63.5 146.05) (size 29.21 16.51) (fields_autoplaced)
+    (stroke (width 0.1524) (type solid))
+    (fill (color 0 0 0 0.0000))
+    (uuid f2fc24d7-37be-4cb1-b748-6ae5ce0a5487)
+    (property "Sheetname" "IR Line follower" (at 63.5 145.3384 0)
+      (effects (font (size 1.27 1.27)) (justify left bottom))
+    )
+    (property "Sheetfile" "IRLine.kicad_sch" (at 63.5 163.1446 0)
+      (effects (font (size 1.27 1.27)) (justify left top))
+    )
+    (pin "IR Left" output (at 92.71 151.13 0)
+      (effects (font (size 1.27 1.27)) (justify right))
+      (uuid cf3cbfb6-a3f3-4884-8884-18b4076fd48d)
+    )
+    (pin "3.3V" input (at 63.5 151.13 180)
+      (effects (font (size 1.27 1.27)) (justify left))
+      (uuid 69dbdd27-658c-4104-9163-1ce9e62853d6)
+    )
+    (pin "5V" input (at 63.5 154.94 180)
+      (effects (font (size 1.27 1.27)) (justify left))
+      (uuid b3254024-133c-4941-86f4-307649a7dac0)
+    )
+    (pin "IR Right" output (at 92.71 157.48 0)
+      (effects (font (size 1.27 1.27)) (justify right))
+      (uuid 393447a5-d079-44ad-8e73-5c6c766102e0)
+    )
+    (pin "LP GND" input (at 63.5 158.75 180)
+      (effects (font (size 1.27 1.27)) (justify left))
+      (uuid 230bbe0b-87fd-4069-99ba-bbe20dac0561)
+    )
+    (instances
+      (project "ROBOT"
+        (path "/4c06c41c-9bca-4047-a966-bb339025bf70" (page "6"))
+      )
+    )
   )
 
   (sheet_instances
     (path "/" (page "1"))
-    (path "/8a0bf8b7-9991-4645-b3e6-8b8ff718cf85" (page "2"))
-    (path "/45209329-3c21-4499-98c2-a8f6fdbddd03" (page "3"))
-    (path "/a4186a1b-ac1b-4531-9771-5db1c40f1c7a" (page "4"))
-    (path "/00f566c1-d8ca-4f41-9b53-ceec4a3d1976" (page "5"))
-  )
-
-  (symbol_instances
-    (path "/45209329-3c21-4499-98c2-a8f6fdbddd03/0cf8fa9f-e2d1-4de7-b6cc-1ba0b2493a7d"
-      (reference "C?") (unit 1) (value "C") (footprint "")
-    )
-    (path "/a4186a1b-ac1b-4531-9771-5db1c40f1c7a/151789d6-7113-45f7-88cd-3c5d29723f01"
-      (reference "C?") (unit 1) (value "470 nF") (footprint "")
-    )
-    (path "/a4186a1b-ac1b-4531-9771-5db1c40f1c7a/194d8b25-5d14-42f0-af7b-e7add1f3aca0"
-      (reference "C?") (unit 1) (value "470 nF") (footprint "")
-    )
-    (path "/45209329-3c21-4499-98c2-a8f6fdbddd03/2a35a891-31e6-41d8-b785-31a5ff6d5a71"
-      (reference "C?") (unit 1) (value "C") (footprint "")
-    )
-    (path "/a4186a1b-ac1b-4531-9771-5db1c40f1c7a/664d2fda-b89e-4255-bda1-7af78504538c"
-      (reference "C?") (unit 1) (value "470 nF") (footprint "")
-    )
-    (path "/00f566c1-d8ca-4f41-9b53-ceec4a3d1976/94e99b52-49e8-47ce-91ce-d1c6c84f8930"
-      (reference "C?") (unit 1) (value "C") (footprint "")
-    )
-    (path "/00f566c1-d8ca-4f41-9b53-ceec4a3d1976/2110e0d9-f89d-477c-9371-89bea20ea6b4"
-      (reference "D?") (unit 1) (value "1N5824") (footprint "Diode_THT:D_DO-201AD_P15.24mm_Horizontal")
-    )
-    (path "/00f566c1-d8ca-4f41-9b53-ceec4a3d1976/1f96726f-2986-464d-999c-9ef9ae5262a0"
-      (reference "L?") (unit 1) (value "INDUCTOR") (footprint "")
-    )
-    (path "/45209329-3c21-4499-98c2-a8f6fdbddd03/f7a133f1-b1da-466c-b311-03db04e9294a"
-      (reference "Q?") (unit 1) (value "QSD 124") (footprint "LED_THT:LED_D5.0mm_Clear")
-    )
-    (path "/45209329-3c21-4499-98c2-a8f6fdbddd03/00d70960-090f-4c3d-96b6-2c4b707d3d38"
-      (reference "R?") (unit 1) (value "R_Variable") (footprint "")
-    )
-    (path "/45209329-3c21-4499-98c2-a8f6fdbddd03/365032c5-7634-4448-aab0-359e9ff7d9cd"
-      (reference "R?") (unit 1) (value "R") (footprint "")
-    )
-    (path "/45209329-3c21-4499-98c2-a8f6fdbddd03/43f3a9a8-f640-4c37-bbce-fec2c01b656e"
-      (reference "R?") (unit 1) (value "10") (footprint "")
-    )
-    (path "/45209329-3c21-4499-98c2-a8f6fdbddd03/4acc0051-060c-4e4a-a983-b1a452750410"
-      (reference "R?") (unit 1) (value "R") (footprint "")
-    )
-    (path "/45209329-3c21-4499-98c2-a8f6fdbddd03/8ab022dc-1713-4b19-844a-aa20446be45a"
-      (reference "R?") (unit 1) (value "100k") (footprint "")
-    )
-    (path "/45209329-3c21-4499-98c2-a8f6fdbddd03/b105e23d-5a63-411d-ba94-834c0d9b6fe4"
-      (reference "R?") (unit 1) (value "R") (footprint "")
-    )
-    (path "/45209329-3c21-4499-98c2-a8f6fdbddd03/cbf37b54-3dc4-41f6-a97c-1a157548f6eb"
-      (reference "R?") (unit 1) (value "R") (footprint "")
-    )
-    (path "/45209329-3c21-4499-98c2-a8f6fdbddd03/d6dc3eb1-d599-4dd6-84e7-844879dd73fc"
-      (reference "R?") (unit 1) (value "R") (footprint "")
-    )
-    (path "/45209329-3c21-4499-98c2-a8f6fdbddd03/f5ff1c9a-42f7-4a3c-b2cc-df3574292922"
-      (reference "R?") (unit 1) (value "100k") (footprint "")
-    )
-    (path "/a4186a1b-ac1b-4531-9771-5db1c40f1c7a/65f504af-379a-4006-952d-c7991af042c8"
-      (reference "U?") (unit 1) (value "LM7833") (footprint "Package_TO_SOT_THT:TO-220-3_Vertical")
-    )
-    (path "/a4186a1b-ac1b-4531-9771-5db1c40f1c7a/6cf0485a-1da8-4614-a411-47bdfa2b5e77"
-      (reference "U?") (unit 1) (value "LM7805_TO220") (footprint "Package_TO_SOT_THT:TO-220-3_Vertical")
-    )
-    (path "/45209329-3c21-4499-98c2-a8f6fdbddd03/7d0d02f8-058e-4ec9-9215-d45259b70b15"
-      (reference "U?") (unit 1) (value "TL082") (footprint "")
-    )
-    (path "/45209329-3c21-4499-98c2-a8f6fdbddd03/866b7ae3-15d3-4dbd-ad0b-ffb6189be6cc"
-      (reference "U?") (unit 1) (value "TL082") (footprint "")
-    )
-    (path "/00f566c1-d8ca-4f41-9b53-ceec4a3d1976/a1087d41-69ff-4f5b-8a33-103016e86f7c"
-      (reference "U?") (unit 1) (value "LM2596S-ADJ") (footprint "Package_TO_SOT_SMD:TO-263-5_TabPin3")
-    )
   )
 )
