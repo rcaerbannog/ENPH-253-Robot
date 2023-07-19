@@ -29,11 +29,11 @@
 const double WHEELBASE = 200;	// In mm, Lengthwise distance between front and rear wheel axles
 const double WHEELSEP = 200;	// In mm, Widthwise distance between front wheels
 const int TAPE_SENSOR_FOUR_SETPOINT = 2000;
-const int TAPE_SENSOR_SETPOINT = 650;	// The analogRead() value when both tape sensors read the same (centered on tape)
-const int TAPE_SENSOR_THRESHOLD = 100;	// The analogRead() value above which we consider the tape sensor to be on tape
+const int TAPE_SENSOR_SETPOINT = 800;	// The analogRead() value when both tape sensors read the same (centered on tape)
+const int TAPE_SENSOR_THRESHOLD = 450;	// The analogRead() value above which we consider the tape sensor to be on tape
 // Make the checkpoint sensors deliberately less sensitive to light -> more sensitive to being off tape?
 const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
-const double STEERING_KP = 0.05;	// Steering angle PID proportionality constant
+const double STEERING_KP = 0.09;	// Steering angle PID proportionality constant
 const double STEERING_KD = 0.0;	// Steering angle PID derivative constant, time derivative unit milliseconds 
 double POWER_SCALE = 0.20; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 const int MOTOR_PWM_FREQ = 50;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
@@ -277,7 +277,7 @@ void tapeFollowing() {
 */
 double differentialFromSteering(double steeringAngleDeg) {
 	if (abs(steeringAngleDeg) < 1.0) {
-		return 0;
+		return 1;
 	}
 	double turnRadius = abs(WHEELBASE / tan(steeringAngleDeg * PI / 180));
 	double differential = (turnRadius - WHEELSEP / 2) / (turnRadius + WHEELSEP / 2);
