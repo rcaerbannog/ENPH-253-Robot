@@ -3,6 +3,8 @@
 #include <Adafruit_SSD1306.h>
 
 // PIN DEFINITIONS
+#define PIN_TAPE_SENSOR_LL PA2
+#define PIN_TAPE_SENSOR_RR PA3
 #define PIN_TAPE_SENSOR_LEFT PA4	// as analog voltage reading
 #define PIN_TAPE_SENSOR_RIGHT PA5	// as analog voltage reading
 #define PIN_CHECKPOINT_SENSOR_LEFT PA2	// as analog voltage reading
@@ -19,23 +21,24 @@
 
 #define PIN_LED_BUILTIN PC13	// DEBUG ONLY: USE TO INDICATE CONTROL LOOP PROGRESSION WITHOUT LCD DISPLAY
 
-#define UNDEFINED 999999999;
+#define UNDEFINED 999999999
 
 /*
  * TAPE FOLLOWING
  */
 const double WHEELBASE = 200;	// In mm, Lengthwise distance between front and rear wheel axles
-const double WHEELSEP = 70;	// In mm, Widthwise distance between front wheels
-const int TAPE_SENSOR_SETPOINT = 800;	// The analogRead() value when both tape sensors read the same (centered on tape)
-const int TAPE_SENSOR_THRESHOLD = 250;	// The analogRead() value above which we consider the tape sensor to be on tape
+const double WHEELSEP = 200;	// In mm, Widthwise distance between front wheels
+const int TAPE_SENSOR_FOUR_SETPOINT = 2000;
+const int TAPE_SENSOR_SETPOINT = 650;	// The analogRead() value when both tape sensors read the same (centered on tape)
+const int TAPE_SENSOR_THRESHOLD = 100;	// The analogRead() value above which we consider the tape sensor to be on tape
 // Make the checkpoint sensors deliberately less sensitive to light -> more sensitive to being off tape?
 const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
-const double STEERING_KP = 0.1;	// Steering angle PID proportionality constant
+const double STEERING_KP = 0.05;	// Steering angle PID proportionality constant
 const double STEERING_KD = 0.0;	// Steering angle PID derivative constant, time derivative unit milliseconds 
-double POWER_SCALE = 1.00; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
+double POWER_SCALE = 0.20; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 const int MOTOR_PWM_FREQ = 50;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
-const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 us. 
-const int STEERING_SERVO_DIRECTION_SIGN = -1;	// Sign variable, +1 or -1. Switches servo direction in case the mounting direction is flipped.
+const double SERVO_NEUTRAL_PULSEWIDTH = 1550;	// In microseconds, default 1500 us. 
+const int STEERING_SERVO_DIRECTION_SIGN = 1;	// Sign variable, +1 or -1. Switches servo direction in case the mounting direction is flipped.
 
 /*
 Note: Motor PWM frequency cannot be too high, else gate driver turn-on time 
@@ -156,8 +159,8 @@ void tapeFollowing() {
 	*/
 
 	const int LOOP_TIME_MILLIS = 20;	// Control loop period. Must be enough time for the code inside to execute!
-	const double maxNormalSteeringAngleDeg = 45.0;	// degrees; for one sensor off tape
-	const double maxSteeringAngleDeg = 45.0; // degrees; for both sensors off tape
+	const double maxNormalSteeringAngleDeg = 30.0;	// degrees; for one sensor off tape
+	const double maxSteeringAngleDeg = 30.0; // degrees; for both sensors off tape
 	int nextLoopTime = millis() + LOOP_TIME_MILLIS;
 
 	// CONTROL LOOP
@@ -222,12 +225,12 @@ void tapeFollowing() {
 		} else {	// Both sensors are completely off the tape! Refer to previous state and use differential steering.
 			if (prevLeftOnTape) {	// We went completely off to the right! The left sensor was the last to come off the tape.
 				steeringAngleDeg = maxSteeringAngleDeg;
-				leftMotorPower = 0;
-				rightMotorPower = 0.7;
+				leftMotorPower = 0.9 * differentialFromSteering(steeringAngleDeg);
+				rightMotorPower = 0.9;
 			} else {	// We went completely off to the left! The right sensor was the last to come off the tape.
 				steeringAngleDeg = -maxSteeringAngleDeg;
-				leftMotorPower = 0.7;
-				rightMotorPower = 0;
+				leftMotorPower = 0.9;
+				rightMotorPower = 0.9 * differentialFromSteering(steeringAngleDeg);
 			}
 		}
 
@@ -278,7 +281,8 @@ double differentialFromSteering(double steeringAngleDeg) {
 	}
 	double turnRadius = abs(WHEELBASE / tan(steeringAngleDeg * PI / 180));
 	double differential = (turnRadius - WHEELSEP / 2) / (turnRadius + WHEELSEP / 2);
-	return differential;
+	//return differential;
+	return 1;
 }
 
 /*
