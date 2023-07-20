@@ -23,7 +23,7 @@
 #define PIN_TAPE_SENSOR_L PA3
 #define PIN_TAPE_SENSOR_R PA4
 #define PIN_TAPE_SENSOR_RR PA5
-const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA2, PA3, PA4, PA5};	// as analog voltage readings
+const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA5, PA4, PA3, PA2};	// as analog voltage readings
 
 /*
  * TAPE FOLLOWING
