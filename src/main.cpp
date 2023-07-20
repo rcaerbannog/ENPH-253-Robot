@@ -14,11 +14,11 @@
 
 #define PIN_LED_BUILTIN PC13	// DEBUG ONLY: USE TO INDICATE CONTROL LOOP PROGRESSION WITHOUT LCD DISPLAY
 
-#define PIN_CHECKPOINT_SENSOR_LEFT PA2	// as analog voltage reading
-#define PIN_CHECKPOINT_SENSOR_RIGHT PA1	// as analog voltage reading
+#define PIN_CHECKPOINT_SENSOR_LEFT PA2	// as analog input
+#define PIN_CHECKPOINT_SENSOR_RIGHT PA1	// as analog input
 #define PIN_STEERING_SERVO PA_6	// as PWM output - servo control
 #define NUM_TAPE_SENSORS 4	// Rep invariant: MUST be the same as length of PINS_TAPE_SENSORS
-const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA2, PA3, PA4, PA5};	// as analog voltage readings
+const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA5, PA4, PA3, PA2};	// as analog input. In order from left to right sensors.
 
 /*
  * TAPE FOLLOWING
@@ -122,18 +122,8 @@ void tapeFollowing() {
 	/* 
 	We assume the checkpoint sensors can see the tape just before and after the main sensors.
 	Consider possibility of checkpoint if left or right checkpoint sensor above threshold.
-	Then freeze current AND previous state, as this will otherwise be destroyed going over the checkpoint.
+	Then freeze previous state, as this will otherwise be destroyed going over the checkpoint.
 	(Rainbow road doesn't change reflectance at current sensitivity, so no false activation there.)
-	CASES
-	Case 1: Only a checkpoint sensor sees tape. Then continue locking max steering angle.
-		We are certainly still off-tape in the same direction. So this is the correct response anyways.
-		Includes Case 1a: Both checkpoint sensors see tape. 
-	Case 2: A checkpoint sensor sees tape AND so does a line sensor, then lock the steering straight and hope this passes.
-		If we were on tape before, then we are probably still
-		If we were off tape, then the tape sensors may be seeing the line or checkpoint (or intersection of cross).
-		If checkpoint, just lock steering for a bit.  
-	Case 3: Only a line sensor sees tape. Then steer using normal PID control.
-		Maybe we just got spooked a little bit. This will soon pass.
 
 	If was on tape and went off, maybe recover state by derivative of error wrt time?
 
@@ -147,13 +137,13 @@ void tapeFollowing() {
 	const double maxSteeringAngleDeg = 30.0; // degrees; for both sensors off tape
 	int nextLoopTime = millis() + LOOP_TIME_MILLIS;
 
-	int tape_sensor_values[NUM_TAPE_SENSORS];
+	int tape_sensor_vals[NUM_TAPE_SENSORS];
 	bool on_tape[NUM_TAPE_SENSORS];
 	int prevErrorDiscreteState = 0;	// 0, 1, 2, 3, or 4 sensors off tape; + to left, - to right
 	int prevError = 0;	// from previous control loop, used for derivative control only if prevLeftOnTape and prevRightOnTape.
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
-	const int TAPE_SENSOR_FOUR_SETPOINT = 2000;
-	const int TAPE_SENSOR_SETPOINT = 800;	// The analogRead() value when both tape sensors read the same (centered on tape)
+	const int TAPE_SENSOR_FOUR_SETPOINT = 2500;	// The sum of four sensor values when centered on the tape (ideally the max value)
+	//const int TAPE_SENSOR_SETPOINT = 800;	// The analogRead() value when both tape sensors read the same (centered on tape)
 	const int TAPE_SENSOR_THRESHOLD = 450;	// The analogRead() value above which we consider the tape sensor to be on tape
 	// Make the checkpoint sensors deliberately less sensitive to light -> more sensitive to being off tape?
 	const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
@@ -175,8 +165,8 @@ void tapeFollowing() {
 
 		for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
 			int sensor = PINS_TAPE_SENSORS[i];
-			tape_sensor_values[sensor] = analogRead(sensor);
-			on_tape[sensor] = tape_sensor_values[i] > TAPE_SENSOR_THRESHOLD;
+			tape_sensor_vals[sensor] = analogRead(sensor);
+			on_tape[sensor] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
 		}
 
 
@@ -202,6 +192,7 @@ void tapeFollowing() {
 				errorDiscreteState = -4;
 			} else {
 				throw("INVALID STATE: went completely off tape from 0 error. Unstable!");
+				// See if using sign of previous derivative helps here
 			}	// If we completely skipped over the tape line, then god help us we can't see that
 			// Perhaps do similar open-loop control to checkpoint: keep scanning as often as possible until we return to the tape line
 		} 
@@ -247,24 +238,27 @@ void tapeFollowing() {
 			steeringAngleDeg = 0;
 			leftMotorPower = 1.0;
 			rightMotorPower = 1.0;
-			// Calculate present error, and assume derivative with sign depending on direction of approach
-			error = TAPE_SENSOR_FOUR_SETPOINT;
+			int absError = TAPE_SENSOR_FOUR_SETPOINT;
 			for (int sensor = 0; sensor < NUM_TAPE_SENSORS; sensor++) {
-				error -= tape_sensor_values[sensor];	// absolute value of error increases further from the tape
+				absError -= tape_sensor_vals[sensor];	// absolute value of error increases further from the tape
 			}
-			error = (errorDiscreteState > 0) ? error : -error;	// positive error if off to right, negative to left
+			absError = max(0, absError);	// bound absolute value of error to positive
+			// positive error if off to right (left tape sensors read higher because closer to tape), negative to left
+			error = (tape_sensor_vals[0] + tape_sensor_vals[1] > tape_sensor_vals[2] + tape_sensor_vals[3]) ? absError : -absError;
 			// since we are coming back onto the tape line, our derivative is opposite the direction of previous error
 			errorDerivative = (prevErrorDiscreteState > 0) ? -1.0 : 1.0;	
 		} else {	// Just plain error control
-			error = TAPE_SENSOR_FOUR_SETPOINT;
+			int absError = TAPE_SENSOR_FOUR_SETPOINT;
 			for (int sensor = 0; sensor < NUM_TAPE_SENSORS; sensor++) {
-				error -= tape_sensor_values[sensor];	// absolute value of error increases further from the tape
+				absError -= tape_sensor_vals[sensor];	// absolute value of error increases further from the tape
 			}
-			error = (errorDiscreteState > 0) ? error : -error;	// positive error if off to right, negative to left
+			absError = max(0, absError);	// bound absolute value of error to positive
+			// positive error if off to right (left tape sensors read higher because closer to tape), negative to left
+			error = (tape_sensor_vals[0] + tape_sensor_vals[1] > tape_sensor_vals[2] + tape_sensor_vals[3]) ? absError : -absError;
 			errorDerivative = (error - prevError) / (double) LOOP_TIME_MILLIS;
 
 			steeringAngleDeg = STEERING_KP * error + STEERING_KD * errorDerivative;
-			steeringAngleDeg = max(-maxNormalSteeringAngleDeg, min(maxNormalSteeringAngleDeg, steeringAngleDeg));	// bound
+			steeringAngleDeg = max(-maxNormalSteeringAngleDeg, min(maxNormalSteeringAngleDeg, steeringAngleDeg));	// bound by 0
 			leftMotorPower = 1.0;
 			rightMotorPower = 1.0;
 		}
@@ -280,7 +274,7 @@ void tapeFollowing() {
 
 		// COMMENT OUT DEBUG DISPLAY CODE IF THERE IS NO DISPLAY, OTHERWISE EXECUTION WILL STALL
 		// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
-		debugDisplay(tape_sensor_values, errorDiscreteState, error, errorDerivative, 
+		debugDisplay(tape_sensor_vals, errorDiscreteState, error, errorDerivative, 
 				leftMotorPower, rightMotorPower, steeringAngleDeg, debugRightWheelAngle);
 		
 		while (millis() < nextLoopTime);	// pause until next scheduled control loop, to ensure consistent loop time
@@ -288,11 +282,11 @@ void tapeFollowing() {
 	}
 }
 
-void debugDisplay(int tape_sensor_values[], int state, int error, int derivative, 
+void debugDisplay(int tape_sensor_vals[], int state, int error, int derivative, 
 		int leftMotorPower, int rightMotorPower, int steeringAngleDeg, int rightWheelAngle) {
 	display_handler.clearDisplay();
 	display_handler.setCursor(0, 0);
-	display_handler.printf("%4d %4d %4d %4d\n", tape_sensor_values[0], tape_sensor_values[1], tape_sensor_values[2], tape_sensor_values[3]);
+	display_handler.printf("%4d %4d %4d %4d\n", tape_sensor_vals[0], tape_sensor_vals[1], tape_sensor_vals[2], tape_sensor_vals[3]);
 	display_handler.printf("St %1d Err %4d D %4d", state, error, derivative);
 	display_handler.print("LMotor: ");
 	display_handler.println(leftMotorPower, 3);
