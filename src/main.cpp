@@ -49,9 +49,10 @@ double debugRightWheelAngle = 0;
 
 // put function declarations here:
 
-void debug();
 void writeToDisplay(const char *str);
 void tapeFollowing();
+void debugDisplay(int tape_sensor_vals[], int state, int error, int derivative, 
+		int leftMotorPower, int rightMotorPower, int steeringAngleDeg, int rightWheelAngle);
 double differentialFromSteering(double steeringAngleDeg);
 void steeringControl(double steeringAngleDeg);
 void motorControl(double lMotorPower, double rMotorPower);
@@ -203,7 +204,6 @@ void tapeFollowing() {
 				writeToDisplay("INVALID STATE: went completely off tape from 0 error. Unstable!");
 				//break;
 				continue;
-				throw("INVALID STATE: went completely off tape from 0 error. Unstable!");
 				// See if using sign of previous derivative helps here
 			}	// If we completely skipped over the tape line, then god help us we can't see that
 			// Perhaps do similar open-loop control to checkpoint: keep scanning as often as possible until we return to the tape line
