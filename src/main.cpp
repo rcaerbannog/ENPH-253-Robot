@@ -28,7 +28,7 @@ const double WHEELSEP = 200;	// In mm, Widthwise distance between front wheels
 double POWER_SCALE = 0.20; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 const int MOTOR_PWM_FREQ = 50;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
 const double SERVO_NEUTRAL_PULSEWIDTH = 1550;	// In microseconds, default 1500 us. 
-const int STEERING_SERVO_DIRECTION_SIGN = 1;	// Sign variable, +1 or -1. Switches servo direction in case the mounting direction is flipped.
+const int STEERING_SERVO_DIRECTION_SIGN = -1;	// Sign variable, +1 or -1. Switches servo direction in case the mounting direction is flipped.
 const double MAX_STEERING_ANGLE_DEG = 40.0;
 
 /*
@@ -49,6 +49,7 @@ double debugRightWheelAngle = 0;
 
 // put function declarations here:
 
+void debug();
 void writeToDisplay(const char *str);
 void tapeFollowing();
 double differentialFromSteering(double steeringAngleDeg);
@@ -62,6 +63,8 @@ void setup() {
 	pinMode(PIN_RMOTOR_REV, OUTPUT);
 
 	for (int pin : PINS_TAPE_SENSORS) pinMode(pin, INPUT);
+	//pinMode(PIN_TAPE_SENSOR_L, INPUT);
+
 	pinMode(PIN_CHECKPOINT_SENSOR_LEFT, INPUT);
 	pinMode(PIN_CHECKPOINT_SENSOR_RIGHT, INPUT);
 	pinMode(PIN_STEERING_SERVO, OUTPUT);
@@ -81,8 +84,9 @@ void setup() {
 }
 
 void loop() {
+	/*
 	try {
-		tapeFollowing;
+		tapeFollowing();
 	} 
 	catch(char *msg) {
 		motorControl(0.0, 0.0);
@@ -94,7 +98,8 @@ void loop() {
 		writeToDisplay("Uncaught exception???");
 		delay(1000000);
 	}
-  	
+  	*/
+  	tapeFollowing();
   	return;
 }
 
@@ -107,6 +112,10 @@ void writeToDisplay(const char *str) {
 	display_handler.setCursor(0, 0);
 	display_handler.println(str);
 	display_handler.display();
+}
+
+void debug() {
+
 }
 
 /*
@@ -137,9 +146,9 @@ void tapeFollowing() {
 	const double maxSteeringAngleDeg = 30.0; // degrees; for both sensors off tape
 	int nextLoopTime = millis() + LOOP_TIME_MILLIS;
 
-	int tape_sensor_vals[NUM_TAPE_SENSORS];
-	bool on_tape[NUM_TAPE_SENSORS];
-	int prevErrorDiscreteState = 0;	// 0, 1, 2, 3, or 4 sensors off tape; + to left, - to right
+	int tape_sensor_vals[NUM_TAPE_SENSORS] = {0, 0, 0, 0};
+	bool on_tape[NUM_TAPE_SENSORS] = {true, true, true, true};
+	int prevErrorDiscreteState = 1;	// 0, 1, 2, 3, or 4 sensors off tape; + to left, - to right
 	int prevError = 0;	// from previous control loop, used for derivative control only if prevLeftOnTape and prevRightOnTape.
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
 	const int TAPE_SENSOR_FOUR_SETPOINT = 2500;	// The sum of four sensor values when centered on the tape (ideally the max value)
@@ -151,6 +160,7 @@ void tapeFollowing() {
 	const double STEERING_KD = 0.0;	// Steering angle PID derivative constant, time derivative unit milliseconds 
 
 	// CONTROL LOOP
+	int loopCounter = 0;
 	while (true) {
 		digitalWrite(PIN_LED_BUILTIN, HIGH);	// DEBUG ONLY, for monitoring control loop progression without LCD display
 		int errorDiscreteState = 9;
@@ -164,9 +174,8 @@ void tapeFollowing() {
 		bool leftOnCheckpoint = analogRead(PIN_CHECKPOINT_SENSOR_LEFT > CHECKPOINT_SENSOR_THRESHOLD);
 
 		for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
-			int sensor = PINS_TAPE_SENSORS[i];
-			tape_sensor_vals[sensor] = analogRead(sensor);
-			on_tape[sensor] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
+			tape_sensor_vals[i] = analogRead(PINS_TAPE_SENSORS[i]);
+			on_tape[i] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
 		}
 
 
@@ -182,7 +191,7 @@ void tapeFollowing() {
 			// This also freezes the previous state
 			// Add a waiting loop in here (separate state)?
 		}
-
+		
 		// Determination of discrete error state (digital sensors or debug)
 		if (!(on_tape[0] || on_tape[1] || on_tape[2] || on_tape[3])) {
 			if (prevErrorDiscreteState > 0)	{
@@ -191,6 +200,9 @@ void tapeFollowing() {
 			else if (prevErrorDiscreteState < 0) {
 				errorDiscreteState = -4;
 			} else {
+				writeToDisplay("INVALID STATE: went completely off tape from 0 error. Unstable!");
+				//break;
+				continue;
 				throw("INVALID STATE: went completely off tape from 0 error. Unstable!");
 				// See if using sign of previous derivative helps here
 			}	// If we completely skipped over the tape line, then god help us we can't see that
@@ -201,28 +213,29 @@ void tapeFollowing() {
 				if (on_tape[2]) {
 					if (on_tape[3]) {
 						errorDiscreteState = 0;
-					}
-					errorDiscreteState = 1;	// right sensors going off tape: off to the right, so positive error state
-				}
-				errorDiscreteState = 2;
-			}
-			errorDiscreteState = 3;
+					} else errorDiscreteState = 1;	// right sensors going off tape: off to the right, so positive error state
+				} else errorDiscreteState = 2;
+			} else errorDiscreteState = 3;
 		} 
 		else if (on_tape[3]) {
 			if (on_tape[2]) {
 				if (on_tape[1]) {
 					errorDiscreteState = -1;	// left sensors going off tape: off to left, so negative error state
 				}
-				errorDiscreteState = -2;
+				else errorDiscreteState = -2;
 			}
-			errorDiscreteState = -3;
+			else errorDiscreteState = -3;
 		} else {
-			throw("INVALID STATE: not detecting checkpoint, and we have discontinuously on tape sensors.");
+			writeToDisplay("INVALID STATE: not detecting checkpoint, and we have discontinuously on tape sensors.");
+			//break;
+			continue;
 		}
 			
 		
 		if (abs(errorDiscreteState) > NUM_TAPE_SENSORS) {
-			throw("Error: errorDiscreteState was set incorrectly");
+			writeToDisplay("Error: errorDiscreteState was set incorrectly");
+			//break;
+			continue;
 		} else if (errorDiscreteState == NUM_TAPE_SENSORS) {	// we are completely off the tape to the right 
 			steeringAngleDeg = maxSteeringAngleDeg;
 			//leftMotorPower = differentialFromSteering(maxSteeringAngleDeg);
@@ -265,6 +278,7 @@ void tapeFollowing() {
 
 		steeringControl(steeringAngleDeg);
 		motorControl(leftMotorPower, rightMotorPower);
+		
 
 		prevErrorDiscreteState = errorDiscreteState;
 		prevError = error;
@@ -279,7 +293,11 @@ void tapeFollowing() {
 		
 		while (millis() < nextLoopTime);	// pause until next scheduled control loop, to ensure consistent loop time
 		nextLoopTime = millis() + LOOP_TIME_MILLIS;
+		loopCounter++;
 	}
+	// right now, the control loop should never end. If we get here there's been an error.
+	motorControl(0.0, 0.0);
+	delay(10000000);
 }
 
 void debugDisplay(int tape_sensor_vals[], int state, int error, int derivative, 
@@ -287,7 +305,7 @@ void debugDisplay(int tape_sensor_vals[], int state, int error, int derivative,
 	display_handler.clearDisplay();
 	display_handler.setCursor(0, 0);
 	display_handler.printf("%4d %4d %4d %4d\n", tape_sensor_vals[0], tape_sensor_vals[1], tape_sensor_vals[2], tape_sensor_vals[3]);
-	display_handler.printf("St %1d Err %4d D %4d", state, error, derivative);
+	display_handler.printf("St %1d Err %4d D %4d\n", state, error, derivative);
 	display_handler.print("LMotor: ");
 	display_handler.println(leftMotorPower, 3);
 	display_handler.print("RMotor: ");
