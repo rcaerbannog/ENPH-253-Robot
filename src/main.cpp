@@ -28,7 +28,7 @@ const double WHEELSEP = 200;	// In mm, Widthwise distance between front wheels
 double POWER_SCALE = 0.20; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 const int MOTOR_PWM_FREQ = 50;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
 const double SERVO_NEUTRAL_PULSEWIDTH = 1550;	// In microseconds, default 1500 us. 
-const int STEERING_SERVO_DIRECTION_SIGN = -1;	// Sign variable, +1 or -1. Switches servo direction in case the mounting direction is flipped.
+const int STEERING_SERVO_DIRECTION_SIGN = 1;	// Sign variable, +1 or -1. Switches servo direction in case the mounting direction is flipped.
 const double MAX_STEERING_ANGLE_DEG = 40.0;
 
 /*
@@ -152,9 +152,9 @@ void tapeFollowing() {
 	int prevErrorDiscreteState = 1;	// 0, 1, 2, 3, or 4 sensors off tape; + to left, - to right
 	int prevError = 0;	// from previous control loop, used for derivative control only if prevLeftOnTape and prevRightOnTape.
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
-	const int TAPE_SENSOR_FOUR_SETPOINT = 2500;	// The sum of four sensor values when centered on the tape (ideally the max value)
+	const int TAPE_SENSOR_FOUR_SETPOINT = 2000;	// The sum of four sensor values when centered on the tape (ideally the max value)
 	//const int TAPE_SENSOR_SETPOINT = 800;	// The analogRead() value when both tape sensors read the same (centered on tape)
-	const int TAPE_SENSOR_THRESHOLD = 450;	// The analogRead() value above which we consider the tape sensor to be on tape
+	const int TAPE_SENSOR_THRESHOLD = 150;	// The analogRead() value above which we consider the tape sensor to be on tape
 	// Make the checkpoint sensors deliberately less sensitive to light -> more sensitive to being off tape?
 	const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
 	const double STEERING_KP = 0.09;	// Steering angle PID proportionality constant
@@ -239,13 +239,13 @@ void tapeFollowing() {
 		} else if (errorDiscreteState == NUM_TAPE_SENSORS) {	// we are completely off the tape to the right 
 			steeringAngleDeg = maxSteeringAngleDeg;
 			//leftMotorPower = differentialFromSteering(maxSteeringAngleDeg);
-			leftMotorPower = 1.0;
+			leftMotorPower = 0.5;
 			rightMotorPower = 1.0;
 		} else if (errorDiscreteState == -NUM_TAPE_SENSORS) {	// we are completely off the tape to the left
 			steeringAngleDeg = -maxSteeringAngleDeg;
 			leftMotorPower = 1.0;
 			//rightMotorPower = differentialFromSteering(-maxSteeringAngleDeg);
-			rightMotorPower = 1.0;
+			rightMotorPower = 0.5;
 		} else if (abs(prevErrorDiscreteState) == NUM_TAPE_SENSORS) {	// we were previously off the tape and have just come back on
 			// Set steering straight to stabilize for one control loop
 			steeringAngleDeg = 0;
