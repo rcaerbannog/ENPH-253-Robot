@@ -25,7 +25,7 @@ const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA5, PA4, PA3, PA2};	// as anal
  */
 const double WHEELBASE = 200;	// In mm, Lengthwise distance between front and rear wheel axles
 const double WHEELSEP = 200;	// In mm, Widthwise distance between front wheels
-double POWER_SCALE = 0.60; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
+double POWER_SCALE = 1.00; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 const int MOTOR_PWM_FREQ = 50;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
 const double SERVO_NEUTRAL_PULSEWIDTH = 1550;	// In microseconds, default 1500 us. 
 const int STEERING_SERVO_DIRECTION_SIGN = 1;	// Sign variable, +1 or -1. Switches servo direction in case the mounting direction is flipped.
@@ -157,8 +157,8 @@ void tapeFollowing() {
 	const int TAPE_SENSOR_THRESHOLD = 150;	// The analogRead() value above which we consider the tape sensor to be on tape
 	// Make the checkpoint sensors deliberately less sensitive to light -> more sensitive to being off tape?
 	const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
-	const double STEERING_KP = 0.05;	// Steering angle PID proportionality constant
-	const double STEERING_KD = 0.02;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
+	const double STEERING_KP = 0.03;	// Steering angle PID proportionality constant
+	const double STEERING_KD = 0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
 
 	// CONTROL LOOP
 	int loopCounter = 0;
@@ -223,13 +223,13 @@ void tapeFollowing() {
 		if (errorDiscreteState >= NUM_TAPE_SENSORS) {	// we are completely off the tape to the right 
 			steeringAngleDeg = maxSteeringAngleDeg;
 			//leftMotorPower = differentialFromSteering(maxSteeringAngleDeg);
-			leftMotorPower = -0.15;
+			leftMotorPower = -0.10;
 			rightMotorPower = 1.0;
 		} else if (errorDiscreteState <= -NUM_TAPE_SENSORS) {	// we are completely off the tape to the left
 			steeringAngleDeg = -maxSteeringAngleDeg;
 			leftMotorPower = 1.0;
 			//rightMotorPower = differentialFromSteering(-maxSteeringAngleDeg);
-			rightMotorPower = -0.15;
+			rightMotorPower = -0.10;
 		} else if (errorDiscreteState == NUM_TAPE_SENSORS - 1) {
 			steeringAngleDeg = -maxNormalSteeringAngleDeg;
 			leftMotorPower = 0.8;
