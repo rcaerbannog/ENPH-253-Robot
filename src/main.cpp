@@ -14,11 +14,11 @@
 
 #define PIN_LED_BUILTIN PC13	// DEBUG ONLY: USE TO INDICATE CONTROL LOOP PROGRESSION WITHOUT LCD DISPLAY
 
-#define PIN_CHECKPOINT_SENSOR_LEFT PA2	// as analog input
-#define PIN_CHECKPOINT_SENSOR_RIGHT PA1	// as analog input
+//#define PIN_CHECKPOINT_SENSOR_LEFT PA1	// as analog input
+//#define PIN_CHECKPOINT_SENSOR_RIGHT PA0	// as analog input
 #define PIN_STEERING_SERVO PA_6	// as PWM output - servo control
-#define NUM_TAPE_SENSORS 4	// Rep invariant: MUST be the same as length of PINS_TAPE_SENSORS
-const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA5, PA4, PA3, PA2};	// as analog input. In order from left to right sensors.
+#define NUM_TAPE_SENSORS 6	// Rep invariant: MUST be the same as length of PINS_TAPE_SENSORS
+const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA5, PA4, PA3, PA2, PA1, PA0};	// as analog input. In order from left to right sensors.
 
 /*
  * TAPE FOLLOWING
@@ -29,7 +29,7 @@ double POWER_SCALE = 1.00; // Power setting, scales all power sent to the motors
 const int MOTOR_PWM_FREQ = 50;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
 const double SERVO_NEUTRAL_PULSEWIDTH = 1550;	// In microseconds, default 1500 us. 
 const int STEERING_SERVO_DIRECTION_SIGN = 1;	// Sign variable, +1 or -1. Switches servo direction in case the mounting direction is flipped.
-const double MAX_STEERING_ANGLE_DEG = 40.0;
+const double MAX_STEERING_ANGLE_DEG = 35.0;	// absolute physical limit of rotation, degrees
 
 /*
 Note: Motor PWM frequency cannot be too high, else gate driver turn-on time 
@@ -50,6 +50,7 @@ double debugRightWheelAngle = 0;
 // put function declarations here:
 
 void writeToDisplay(const char *str);
+double errorFunc(int tape_sensor_vals[], int TAPE_SENSOR_THRESHOLD);
 void tapeFollowing();
 void debugDisplay(int tape_sensor_vals[], int state, int error, int derivative, 
 		int leftMotorPower, int rightMotorPower, int steeringAngleDeg, int rightWheelAngle);
@@ -64,10 +65,9 @@ void setup() {
 	pinMode(PIN_RMOTOR_REV, OUTPUT);
 
 	for (int pin : PINS_TAPE_SENSORS) pinMode(pin, INPUT);
-	//pinMode(PIN_TAPE_SENSOR_L, INPUT);
 
-	pinMode(PIN_CHECKPOINT_SENSOR_LEFT, INPUT);
-	pinMode(PIN_CHECKPOINT_SENSOR_RIGHT, INPUT);
+	//pinMode(PIN_CHECKPOINT_SENSOR_LEFT, INPUT);
+	//pinMode(PIN_CHECKPOINT_SENSOR_RIGHT, INPUT);
 	pinMode(PIN_STEERING_SERVO, OUTPUT);
 
 	pinMode(PIN_LED_BUILTIN, OUTPUT);
@@ -105,21 +105,6 @@ void loop() {
 }
 
 /*
- * Clears display and writes a string. FOR DEBUG!
- * @param str The string to show on the display.
- */ 
-void writeToDisplay(const char *str) {
-	display_handler.clearDisplay();
-	display_handler.setCursor(0, 0);
-	display_handler.println(str);
-	display_handler.display();
-}
-
-void debug() {
-
-}
-
-/*
  * Non-PID for now
  * Assume for now that we want to go at full speed all the time, no power differences
  * 
@@ -143,20 +128,17 @@ void tapeFollowing() {
 	*/
 
 	const int LOOP_TIME_MILLIS = 20;	// Control loop period. Must be enough time for the code inside to execute!
-	const double maxNormalSteeringAngleDeg = 30.0;	// degrees; for one sensor off tape
-	const double maxSteeringAngleDeg = 35.0; // degrees; for both sensors off tape
+	const double MAX_NORMAL_STEERING_ANGLE_DEG = 30.0; // soft limit when doing P-D control on tape, degrees
 	int nextLoopTime = millis() + LOOP_TIME_MILLIS;
 
 	int tape_sensor_vals[NUM_TAPE_SENSORS] = {0, 0, 0, 0};
 	bool on_tape[NUM_TAPE_SENSORS] = {true, true, true, true};
-	int prevErrorDiscreteState = 1;	// 0, 1, 2, 3, or 4 sensors off tape; + to left, - to right
-	int prevError = 0;	// from previous control loop, used for derivative control only if prevLeftOnTape and prevRightOnTape.
+	int prevErrorDiscreteState = 1;	// -2, -1, 0, 1, or 2 (off tape to left, on tape, off tape to right)
+	double prevError = 0;	// from previous control loop, used for derivative control only if prevLeftOnTape and prevRightOnTape.
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
-	const int TAPE_SENSOR_FOUR_SETPOINT = 1500;	// The sum of four sensor values when centered on the tape (ideally the max value)
-	//const int TAPE_SENSOR_SETPOINT = 800;	// The analogRead() value when both tape sensors read the same (centered on tape)
-	const int TAPE_SENSOR_THRESHOLD = 150;	// The analogRead() value above which we consider the tape sensor to be on tape
+	const int TAPE_SENSOR_THRESHOLD = 200;	// The analogRead() value above which we consider the tape sensor to be on tape
 	// Make the checkpoint sensors deliberately less sensitive to light -> more sensitive to being off tape?
-	const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
+	// const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
 	const double STEERING_KP = 0.03;	// Steering angle PID proportionality constant
 	const double STEERING_KD = 0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
 
@@ -164,23 +146,17 @@ void tapeFollowing() {
 	int loopCounter = 0;
 	while (true) {
 		digitalWrite(PIN_LED_BUILTIN, HIGH);	// DEBUG ONLY, for monitoring control loop progression without LCD display
-		int errorDiscreteState = 9;	// should be between -NUM_TAPE_SENSORS and +NUM_TAPE_SENSORS, positive when off to right
-		int error = 9999;	// Unitless; Positive error means to right of tape, negative to left
-		double errorDerivative = 999.9;
+		int errorDiscreteState = prevErrorDiscreteState;	// should be between -NUM_TAPE_SENSORS and +NUM_TAPE_SENSORS, positive when off to right
+		double error = prevError;	// Unitless; Positive error means to right of tape, negative to left; prevError only for debug
+		double errorDerivative = prevErrorDerivative;	// prevErrorDerivative only for debug
 		double steeringAngleDeg = 999.9; // In degrees; Positive angle means steering to left (CCW circling)
 		double leftMotorPower = 1.0;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
 		double rightMotorPower = 1.0;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
 
-		bool rightOnCheckpoint = analogRead(PIN_CHECKPOINT_SENSOR_RIGHT > CHECKPOINT_SENSOR_THRESHOLD);
-		bool leftOnCheckpoint = analogRead(PIN_CHECKPOINT_SENSOR_LEFT > CHECKPOINT_SENSOR_THRESHOLD);
+		// bool rightOnCheckpoint = analogRead(PIN_CHECKPOINT_SENSOR_RIGHT > CHECKPOINT_SENSOR_THRESHOLD);
+		// bool leftOnCheckpoint = analogRead(PIN_CHECKPOINT_SENSOR_LEFT > CHECKPOINT_SENSOR_THRESHOLD);
 
-		for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
-			tape_sensor_vals[i] = analogRead(PINS_TAPE_SENSORS[i]);
-			on_tape[i] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
-		}
-
-
-		if (rightOnCheckpoint || leftOnCheckpoint) {	// freeze current state
+		/* if (rightOnCheckpoint || leftOnCheckpoint) {	// freeze current state
 			display_handler.print("On checkpoint!");
 			display_handler.display();
 			if (abs(prevErrorDiscreteState) < 4) {
@@ -191,85 +167,77 @@ void tapeFollowing() {
 			// Implied: else, if completely off tape then continue previous max steering
 			// This also freezes the previous state
 			// Add a waiting loop in here (separate state)?
+		} */
+
+		for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
+			tape_sensor_vals[i] = analogRead(PINS_TAPE_SENSORS[i]);
+			on_tape[i] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
 		}
 		
 		// Determination of discrete error state (digital sensors or debug)
-		if (!(on_tape[0] || on_tape[1] || on_tape[2] || on_tape[3])) {
-			if (prevErrorDiscreteState > 0)	{
-				errorDiscreteState = 4;
+		bool offTape = true;
+		bool onlyLeftmostOn = on_tape[0];
+		bool onlyRightmostOn = on_tape[NUM_TAPE_SENSORS - 1];
+		for (int sensor = 0; sensor < NUM_TAPE_SENSORS; sensor++) {
+			if (on_tape[sensor]) {	// Strictly greater than required for error determination
+				offTape = false;
+				if (sensor != 0) onlyLeftmostOn = false;
+				if (sensor != NUM_TAPE_SENSORS - 1) onlyRightmostOn = false;
 			}
-			else if (prevErrorDiscreteState < 0) {
-				errorDiscreteState = -4;
-			} else {
-				writeToDisplay("INVALID STATE: went completely off tape from 0 error. Unstable!");
-				//break;
-				continue;
-				// See if using sign of previous derivative helps here
-			}	// If we completely skipped over the tape line, then god help us we can't see that
+		}
+
+		if (offTape) {
+			if (prevError >= 0)	{	// relies on prevError not being updated to avoid wiping the check condition
+				errorDiscreteState = 2;
+			}
+			else {	// prevError < 0
+				errorDiscreteState = -2;
+			}
+			// See if using sign of previous derivative helps here
+			// If we completely skipped over the tape line, then god help us we can't see that
 			// Perhaps do similar open-loop control to checkpoint: keep scanning as often as possible until we return to the tape line
-		} else if (on_tape[0] && !(on_tape[1] || on_tape[2] || on_tape[3])) {
-			errorDiscreteState = 3;
-		} else if (on_tape[3] && !(on_tape[0] || on_tape[1] || on_tape[2])) {
-			errorDiscreteState = -3;
+		} else {
+			error = errorFunc(tape_sensor_vals, TAPE_SENSOR_THRESHOLD);	// error is calculated here!
+			if (onlyLeftmostOn) {
+				errorDiscreteState = 1;
+			} else if (onlyRightmostOn) {
+				errorDiscreteState = -1;
+			} else {
+				errorDiscreteState = 0;
+			}
 		}
-		else if (tape_sensor_vals[0] + tape_sensor_vals[1] > tape_sensor_vals[2] + tape_sensor_vals[3]) {
-			errorDiscreteState = 1;
-		} 
-		else {
-			errorDiscreteState = -1;
-		}
-			
-		
-		if (errorDiscreteState >= NUM_TAPE_SENSORS) {	// we are completely off the tape to the right 
-			steeringAngleDeg = maxSteeringAngleDeg;
-			//leftMotorPower = differentialFromSteering(maxSteeringAngleDeg);
-			leftMotorPower = -0.10;
+
+		// Now deciding what to actually do
+		if (errorDiscreteState >= 2) {	// we are completely off the tape to the right 
+			steeringAngleDeg = MAX_STEERING_ANGLE_DEG;
+			//leftMotorPower = differentialFromSteering(MAX_STEERING_ANGLE_DEG);
+			leftMotorPower = -0.15;	// make time-varying (though it wasn't before)
 			rightMotorPower = 1.0;
-		} else if (errorDiscreteState <= -NUM_TAPE_SENSORS) {	// we are completely off the tape to the left
-			steeringAngleDeg = -maxSteeringAngleDeg;
+		} else if (errorDiscreteState <= -2) {	// we are completely off the tape to the left
+			steeringAngleDeg = -MAX_STEERING_ANGLE_DEG;
 			leftMotorPower = 1.0;
-			//rightMotorPower = differentialFromSteering(-maxSteeringAngleDeg);
-			rightMotorPower = -0.10;
-		} else if (errorDiscreteState == NUM_TAPE_SENSORS - 1) {
-			steeringAngleDeg = -maxNormalSteeringAngleDeg;
-			leftMotorPower = 0.8;
+			//rightMotorPower = differentialFromSteering(-MAX_STEERING_ANGLE_DEG);
+			rightMotorPower = -0.15;	// make time-varying (though it wasn't before)
+		} else if (errorDiscreteState == 1) {
+			steeringAngleDeg = -MAX_STEERING_ANGLE_DEG;
+			leftMotorPower = 0.7;
 			rightMotorPower = 1.0;
-		} else if (errorDiscreteState == - (NUM_TAPE_SENSORS - 1)) {
-			steeringAngleDeg = -maxNormalSteeringAngleDeg;
+		} else if (errorDiscreteState == - 1) {
+			steeringAngleDeg = MAX_STEERING_ANGLE_DEG;
 			leftMotorPower = 1.0;
-			rightMotorPower = -0.8;
-		} else if (abs(prevErrorDiscreteState) >= NUM_TAPE_SENSORS - 1) {	// we were previously off the tape and have just come back on
+			rightMotorPower = 0.7;
+		} else if (abs(prevErrorDiscreteState) > 0) {	// we were previously off the tape and have just come back on
 			// Set steering straight to stabilize for one control loop
 			steeringAngleDeg = 0;
 			leftMotorPower = 1.0;
 			rightMotorPower = 1.0;
-			/*
-			int absError = TAPE_SENSOR_FOUR_SETPOINT;
-			for (int sensor = 0; sensor < NUM_TAPE_SENSORS; sensor++) {
-				absError -= tape_sensor_vals[sensor];	// absolute value of error increases further from the tape
-			}
-			absError = max(0, absError);	// bound absolute value of error to positive
-			// positive error if off to right (left tape sensors read higher because closer to tape), negative to left
-			error = (tape_sensor_vals[0] + tape_sensor_vals[1] > tape_sensor_vals[2] + tape_sensor_vals[3]) ? absError : -absError;
-			*/
-			error = (tape_sensor_vals[0] + tape_sensor_vals[1]) - (tape_sensor_vals[2] + tape_sensor_vals[3]);
-			// since we are coming back onto the tape line, our derivative is opposite the direction of previous error
+			// since we are coming back onto the tape line, the sign of the derivative is opposite the direction of previous error
 			errorDerivative = (prevErrorDiscreteState > 0) ? -1.0 : 1.0;	
 		} else {	// Just plain error control
-			/*
-			int absError = TAPE_SENSOR_FOUR_SETPOINT;
-			for (int sensor = 0; sensor < NUM_TAPE_SENSORS; sensor++) {
-				absError -= tape_sensor_vals[sensor];	// absolute value of error increases further from the tape
-			}
-			absError = max(0, absError);	// bound absolute value of error to positive
-			// positive error if off to right (left tape sensors read higher because closer to tape), negative to left
-			error = (tape_sensor_vals[0] + tape_sensor_vals[1] > tape_sensor_vals[2] + tape_sensor_vals[3]) ? absError : -absError;
-			*/
-			error = (tape_sensor_vals[0] + tape_sensor_vals[1]) - (tape_sensor_vals[2] + tape_sensor_vals[3]);
+			// Because we establish error once when coming back onto tape (see previous case), derivative is always well-defined
 			errorDerivative = (error - prevError);
-
-			steeringAngleDeg = STEERING_KP * error + STEERING_KD * errorDerivative;
-			steeringAngleDeg = max(-maxNormalSteeringAngleDeg, min(maxNormalSteeringAngleDeg, steeringAngleDeg));	// bound by 0
+			steeringAngleDeg = STEERING_KP * error + STEERING_KD * errorDerivative;	// P-D control
+			steeringAngleDeg = max(-MAX_NORMAL_STEERING_ANGLE_DEG, min(MAX_NORMAL_STEERING_ANGLE_DEG, steeringAngleDeg));	// bound by 0
 			leftMotorPower = 1.0;
 			rightMotorPower = 1.0;
 		}
@@ -286,8 +254,27 @@ void tapeFollowing() {
 
 		// COMMENT OUT DEBUG DISPLAY CODE IF THERE IS NO DISPLAY, OTHERWISE EXECUTION WILL STALL
 		// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
-		debugDisplay(tape_sensor_vals, errorDiscreteState, error, errorDerivative, 
-				leftMotorPower, rightMotorPower, steeringAngleDeg, debugRightWheelAngle);
+		// debugDisplay(tape_sensor_vals, errorDiscreteState, error, errorDerivative, 
+		//		leftMotorPower, rightMotorPower, steeringAngleDeg, debugRightWheelAngle);
+		display_handler.clearDisplay();
+		display_handler.setCursor(0, 0);
+		for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%4d", tape_sensor_vals[i]);
+		display_handler.println();
+		display_handler.printf("St %1d", errorDiscreteState);
+		display_handler.print(" E ");
+		display_handler.print(error, 2);
+		display_handler.print(" dE ");
+		display_handler.println(errorDerivative, 2);
+		display_handler.print("LM ");
+		display_handler.print(leftMotorPower, 3);
+		display_handler.print(" RM ");
+		display_handler.println(rightMotorPower, 3);
+		display_handler.print("Steer ");
+		display_handler.print(steeringAngleDeg, 1);
+		display_handler.print(" R ");
+		display_handler.println(debugRightWheelAngle, 1);
+		display_handler.printf("Loop %d\n", loopCounter);
+		display_handler.display();
 		
 		while (millis() < nextLoopTime);	// pause until next scheduled control loop, to ensure consistent loop time
 		nextLoopTime = millis() + LOOP_TIME_MILLIS;
@@ -298,21 +285,32 @@ void tapeFollowing() {
 	delay(10000000);
 }
 
-void debugDisplay(int tape_sensor_vals[], int state, int error, int derivative, 
-		int leftMotorPower, int rightMotorPower, int steeringAngleDeg, int rightWheelAngle) {
+
+/*
+ * Clears display and writes a string. FOR DEBUG!
+ * @param str The string to show on the display.
+ */ 
+void writeToDisplay(const char *str) {
 	display_handler.clearDisplay();
 	display_handler.setCursor(0, 0);
-	display_handler.printf("%4d %4d %4d %4d\n", tape_sensor_vals[0], tape_sensor_vals[1], tape_sensor_vals[2], tape_sensor_vals[3]);
-	display_handler.printf("St %1d Err %4d D %4d\n", state, error, derivative);
-	display_handler.print("LMotor: ");
-	display_handler.println(leftMotorPower, 3);
-	display_handler.print("RMotor: ");
-	display_handler.println(rightMotorPower, 3);
-	display_handler.print("Steer ");
-	display_handler.print(steeringAngleDeg, 1);
-	display_handler.print(" R ");
-	display_handler.println(rightWheelAngle, 1);
+	display_handler.println(str);
 	display_handler.display();
+}
+
+/*
+ * Returns the weighted 'center of tape sensor readings' above the on-tape threshold
+ * Precondition: tape_sensor_vals is an array of size NUM_TAPE_SENSORS which contains analog sensor readings corresponding to PINS_TAPE_SENSORS
+ * Precondition: at least one sensor must be on tape, i.e. above TAPE_SENSOR_THRESHOLD
+*/
+double errorFunc(int tape_sensor_vals[], int TAPE_SENSOR_THRESHOLD) {
+	int sumSensorVals = 0;
+	int sumSensorValsPosWeighted = 0;
+	for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
+		sumSensorVals += max(0, tape_sensor_vals[i] - TAPE_SENSOR_THRESHOLD);
+		sumSensorValsPosWeighted += i * max(0, tape_sensor_vals[i] - TAPE_SENSOR_THRESHOLD);
+	}
+	double error = 0.5 * (NUM_TAPE_SENSORS - 1) - ((double) sumSensorValsPosWeighted) / ((double) sumSensorVals);
+	return error;
 }
 
 /*
@@ -379,12 +377,6 @@ void steeringControl(double steeringAngleDeg) {
  * @param rMotorPower Same for the right motor, between -1 and 1.
  */
 void motorControl(double lMotorPower, double rMotorPower) {
-	// if (lMotorPower == 0.0) {
-	// 	lMotorPower = 0.01;
-	// }
-	// if (rMotorPower == 0.0) {
-	// 	rMotorPower = 0.01;
-	// }
 	if (lMotorPower > 0) {	// forwards
 		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 		pwm_start(PIN_LMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * POWER_SCALE * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
