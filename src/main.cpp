@@ -14,11 +14,11 @@
 
 #define PIN_LED_BUILTIN PC13	// DEBUG ONLY: USE TO INDICATE CONTROL LOOP PROGRESSION WITHOUT LCD DISPLAY
 
-#define PIN_CHECKPOINT_SENSOR_LEFT PA1	// as analog input
-#define PIN_CHECKPOINT_SENSOR_RIGHT PA0	// as analog input
+//#define PIN_CHECKPOINT_SENSOR_LEFT PA1	// as analog input
+//#define PIN_CHECKPOINT_SENSOR_RIGHT PA0	// as analog input
 #define PIN_STEERING_SERVO PA_6	// as PWM output - servo control
-#define NUM_TAPE_SENSORS 4	// Rep invariant: MUST be the same as length of PINS_TAPE_SENSORS
-const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA5, PA4, PA3, PA2};	// as analog input. In order from left to right sensors.
+#define NUM_TAPE_SENSORS 6	// Rep invariant: MUST be the same as length of PINS_TAPE_SENSORS
+const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA5, PA4, PA3, PA2, PA1, PA0};	// as analog input. In order from left to right sensors.
 
 /*
  * TAPE FOLLOWING
@@ -65,10 +65,9 @@ void setup() {
 	pinMode(PIN_RMOTOR_REV, OUTPUT);
 
 	for (int pin : PINS_TAPE_SENSORS) pinMode(pin, INPUT);
-	//pinMode(PIN_TAPE_SENSOR_L, INPUT);
 
-	pinMode(PIN_CHECKPOINT_SENSOR_LEFT, INPUT);
-	pinMode(PIN_CHECKPOINT_SENSOR_RIGHT, INPUT);
+	//pinMode(PIN_CHECKPOINT_SENSOR_LEFT, INPUT);
+	//pinMode(PIN_CHECKPOINT_SENSOR_RIGHT, INPUT);
 	pinMode(PIN_STEERING_SERVO, OUTPUT);
 
 	pinMode(PIN_LED_BUILTIN, OUTPUT);
@@ -137,9 +136,9 @@ void tapeFollowing() {
 	int prevErrorDiscreteState = 1;	// -2, -1, 0, 1, or 2 (off tape to left, on tape, off tape to right)
 	double prevError = 0;	// from previous control loop, used for derivative control only if prevLeftOnTape and prevRightOnTape.
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
-	const int TAPE_SENSOR_THRESHOLD = 150;	// The analogRead() value above which we consider the tape sensor to be on tape
+	const int TAPE_SENSOR_THRESHOLD = 200;	// The analogRead() value above which we consider the tape sensor to be on tape
 	// Make the checkpoint sensors deliberately less sensitive to light -> more sensitive to being off tape?
-	const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
+	// const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
 	const double STEERING_KP = 0.03;	// Steering angle PID proportionality constant
 	const double STEERING_KD = 0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
 
@@ -147,15 +146,15 @@ void tapeFollowing() {
 	int loopCounter = 0;
 	while (true) {
 		digitalWrite(PIN_LED_BUILTIN, HIGH);	// DEBUG ONLY, for monitoring control loop progression without LCD display
-		int errorDiscreteState = 9;	// should be between -NUM_TAPE_SENSORS and +NUM_TAPE_SENSORS, positive when off to right
-		int error = 9999;	// Unitless; Positive error means to right of tape, negative to left
-		double errorDerivative = 999.9;
+		int errorDiscreteState = prevErrorDiscreteState;	// should be between -NUM_TAPE_SENSORS and +NUM_TAPE_SENSORS, positive when off to right
+		double error = prevError;	// Unitless; Positive error means to right of tape, negative to left; prevError only for debug
+		double errorDerivative = prevErrorDerivative;	// prevErrorDerivative only for debug
 		double steeringAngleDeg = 999.9; // In degrees; Positive angle means steering to left (CCW circling)
 		double leftMotorPower = 1.0;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
 		double rightMotorPower = 1.0;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
 
-		bool rightOnCheckpoint = analogRead(PIN_CHECKPOINT_SENSOR_RIGHT > CHECKPOINT_SENSOR_THRESHOLD);
-		bool leftOnCheckpoint = analogRead(PIN_CHECKPOINT_SENSOR_LEFT > CHECKPOINT_SENSOR_THRESHOLD);
+		// bool rightOnCheckpoint = analogRead(PIN_CHECKPOINT_SENSOR_RIGHT > CHECKPOINT_SENSOR_THRESHOLD);
+		// bool leftOnCheckpoint = analogRead(PIN_CHECKPOINT_SENSOR_LEFT > CHECKPOINT_SENSOR_THRESHOLD);
 
 		/* if (rightOnCheckpoint || leftOnCheckpoint) {	// freeze current state
 			display_handler.print("On checkpoint!");
@@ -188,10 +187,10 @@ void tapeFollowing() {
 		}
 
 		if (offTape) {
-			if (prevError >= 0)	{
+			if (prevError >= 0)	{	// relies on prevError not being updated to avoid wiping the check condition
 				errorDiscreteState = 2;
 			}
-			else if (prevError < 0) {
+			else {	// prevError < 0
 				errorDiscreteState = -2;
 			}
 			// See if using sign of previous derivative helps here
@@ -257,6 +256,25 @@ void tapeFollowing() {
 		// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
 		// debugDisplay(tape_sensor_vals, errorDiscreteState, error, errorDerivative, 
 		//		leftMotorPower, rightMotorPower, steeringAngleDeg, debugRightWheelAngle);
+		display_handler.clearDisplay();
+		display_handler.setCursor(0, 0);
+		for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%4d", tape_sensor_vals[i]);
+		display_handler.println();
+		display_handler.printf("St %1d", errorDiscreteState);
+		display_handler.print(" E ");
+		display_handler.print(error, 2);
+		display_handler.print(" dE ");
+		display_handler.println(errorDerivative, 2);
+		display_handler.print("LM ");
+		display_handler.print(leftMotorPower, 3);
+		display_handler.print(" RM ");
+		display_handler.println(rightMotorPower, 3);
+		display_handler.print("Steer ");
+		display_handler.print(steeringAngleDeg, 1);
+		display_handler.print(" R ");
+		display_handler.println(debugRightWheelAngle, 1);
+		display_handler.printf("Loop %d\n", loopCounter);
+		display_handler.display();
 		
 		while (millis() < nextLoopTime);	// pause until next scheduled control loop, to ensure consistent loop time
 		nextLoopTime = millis() + LOOP_TIME_MILLIS;
@@ -279,24 +297,6 @@ void writeToDisplay(const char *str) {
 	display_handler.display();
 }
 
-
-void debugDisplay(int tape_sensor_vals[], int state, int error, int derivative, 
-		int leftMotorPower, int rightMotorPower, int steeringAngleDeg, int rightWheelAngle) {
-	display_handler.clearDisplay();
-	display_handler.setCursor(0, 0);
-	display_handler.printf("%4d %4d %4d %4d\n", tape_sensor_vals[0], tape_sensor_vals[1], tape_sensor_vals[2], tape_sensor_vals[3]);
-	display_handler.printf("St %1d Err %4d D %4d\n", state, error, derivative);
-	display_handler.print("LMotor: ");
-	display_handler.println(leftMotorPower, 3);
-	display_handler.print("RMotor: ");
-	display_handler.println(rightMotorPower, 3);
-	display_handler.print("Steer ");
-	display_handler.print(steeringAngleDeg, 1);
-	display_handler.print(" R ");
-	display_handler.println(rightWheelAngle, 1);
-	display_handler.display();
-}
-
 /*
  * Returns the weighted 'center of tape sensor readings' above the on-tape threshold
  * Precondition: tape_sensor_vals is an array of size NUM_TAPE_SENSORS which contains analog sensor readings corresponding to PINS_TAPE_SENSORS
@@ -306,9 +306,10 @@ double errorFunc(int tape_sensor_vals[], int TAPE_SENSOR_THRESHOLD) {
 	int sumSensorVals = 0;
 	int sumSensorValsPosWeighted = 0;
 	for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
-		sumSensorValsPosWeighted += i * max(0, NUM_TAPE_SENSORS - TAPE_SENSOR_THRESHOLD);
+		sumSensorVals += max(0, tape_sensor_vals[i] - TAPE_SENSOR_THRESHOLD);
+		sumSensorValsPosWeighted += i * max(0, tape_sensor_vals[i] - TAPE_SENSOR_THRESHOLD);
 	}
-	double error = ((double) sumSensorValsPosWeighted) / ((double) sumSensorVals) - 0.5 * (NUM_TAPE_SENSORS - 1);
+	double error = 0.5 * (NUM_TAPE_SENSORS - 1) - ((double) sumSensorValsPosWeighted) / ((double) sumSensorVals);
 	return error;
 }
 
