@@ -12,6 +12,10 @@
 #define PIN_RMOTOR_FWD PA_10	// as PWM output - H-bridge driver
 #define PIN_RMOTOR_REV PA_11	// as PWM output - H-bridge driver
 
+#define PIN_HALL_SENSOR PB13	// as digital input
+#define PIN_BLOCKMOTOR_FWD PB14	// as digital output (non-PWM, so max speed)
+#define PIN_BLOCKMOTOR_REV PB15	// as digital output (non-PWM, so max speed)
+
 #define PIN_LED_BUILTIN PC13	// DEBUG ONLY: USE TO INDICATE CONTROL LOOP PROGRESSION WITHOUT LCD DISPLAY
 
 //#define PIN_CHECKPOINT_SENSOR_LEFT PA1	// as analog input
@@ -27,9 +31,13 @@ const double WHEELBASE = 200;	// In mm, Lengthwise distance between front and re
 const double WHEELSEP = 200;	// In mm, Widthwise distance between front wheels
 double POWER_SCALE = 1.00; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 const int MOTOR_PWM_FREQ = 50;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
-const double SERVO_NEUTRAL_PULSEWIDTH = 1550;	// In microseconds, default 1500 us. 
+const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 us. 
 const int STEERING_SERVO_DIRECTION_SIGN = 1;	// Sign variable, +1 or -1. Switches servo direction in case the mounting direction is flipped.
 const double MAX_STEERING_ANGLE_DEG = 35.0;	// absolute physical limit of rotation, degrees
+
+const int BOMB_EJECTION_TIME_MILLIS = 1000;
+int bombEjectionEndTime = 0;
+bool bombEject = false;
 
 /*
 Note: Motor PWM frequency cannot be too high, else gate driver turn-on time 
@@ -48,7 +56,7 @@ double debugRightWheelAngle = 0;
 
 
 // put function declarations here:
-
+void interruptBombEjection();
 void writeToDisplay(const char *str);
 double errorFunc(int tape_sensor_vals[], int TAPE_SENSOR_THRESHOLD);
 void tapeFollowing();
@@ -80,8 +88,16 @@ void setup() {
 	display_handler.clearDisplay();
 	display_handler.setTextSize(1);
 	display_handler.setTextColor(SSD1306_WHITE);
-
 	writeToDisplay("Either there is no display code after startup, or the program froze before completing a control loop.");
+
+	// set up block collection system. Hall sensor looks Schmitt triggered (switch time ~1us) and sees no bouncing
+	pinMode(PIN_HALL_SENSOR, INPUT);	// using our own resistor instead of Bluepill internal pullup resistor
+	pinMode(PIN_BLOCKMOTOR_FWD, OUTPUT);
+	pinMode(PIN_BLOCKMOTOR_REV, OUTPUT);
+	digitalWrite(PIN_BLOCKMOTOR_REV, LOW);
+	digitalWrite(PIN_BLOCKMOTOR_FWD, HIGH);
+	bombEject = false;
+	attachInterrupt(PIN_HALL_SENSOR, interruptBombEjection, FALLING);	// With pullup resistor, Hall sensor goes low when in strong magnetic field
 }
 
 void loop() {
@@ -102,6 +118,14 @@ void loop() {
   	*/
   	tapeFollowing();
   	return;
+}
+
+
+void interruptBombEjection() {
+	digitalWrite(PIN_BLOCKMOTOR_FWD, LOW);
+	digitalWrite(PIN_BLOCKMOTOR_REV, HIGH);
+	bombEject = true;
+	bombEjectionEndTime = millis() + BOMB_EJECTION_TIME_MILLIS;
 }
 
 /*
@@ -220,12 +244,12 @@ void tapeFollowing() {
 			rightMotorPower = -0.15;	// make time-varying (though it wasn't before)
 		} else if (errorDiscreteState == 1) {
 			steeringAngleDeg = -MAX_STEERING_ANGLE_DEG;
-			leftMotorPower = 0.7;
+			leftMotorPower = differentialFromSteering(steeringAngleDeg);
 			rightMotorPower = 1.0;
 		} else if (errorDiscreteState == - 1) {
 			steeringAngleDeg = MAX_STEERING_ANGLE_DEG;
 			leftMotorPower = 1.0;
-			rightMotorPower = 0.7;
+			rightMotorPower = differentialFromSteering(steeringAngleDeg);
 		} else if (abs(prevErrorDiscreteState) > 0) {	// we were previously off the tape and have just come back on
 			// Set steering straight to stabilize for one control loop
 			steeringAngleDeg = 0;
@@ -238,8 +262,13 @@ void tapeFollowing() {
 			errorDerivative = (error - prevError);
 			steeringAngleDeg = STEERING_KP * error + STEERING_KD * errorDerivative;	// P-D control
 			steeringAngleDeg = max(-MAX_NORMAL_STEERING_ANGLE_DEG, min(MAX_NORMAL_STEERING_ANGLE_DEG, steeringAngleDeg));	// bound by 0
-			leftMotorPower = 1.0;
-			rightMotorPower = 1.0;
+			if (steeringAngleDeg >= 0) {
+				leftMotorPower = differentialFromSteering(steeringAngleDeg);
+				rightMotorPower = 1.0;
+			} else {
+				leftMotorPower = 1.0;
+				rightMotorPower = differentialFromSteering(rightMotorPower);
+			}
 		}
 
 		steeringControl(steeringAngleDeg);
@@ -275,6 +304,14 @@ void tapeFollowing() {
 		display_handler.println(debugRightWheelAngle, 1);
 		display_handler.printf("Loop %d\n", loopCounter);
 		display_handler.display();
+
+		// handle interrupt resolution / tasks
+		// Make a dedicated queue for this later
+		if (bombEject && millis() > bombEjectionEndTime) {
+			digitalWrite(PIN_BLOCKMOTOR_REV, LOW);
+			digitalWrite(PIN_BLOCKMOTOR_FWD, HIGH);
+			bombEject = false;
+		}
 		
 		while (millis() < nextLoopTime);	// pause until next scheduled control loop, to ensure consistent loop time
 		nextLoopTime = millis() + LOOP_TIME_MILLIS;
@@ -324,7 +361,7 @@ double errorFunc(int tape_sensor_vals[], int TAPE_SENSOR_THRESHOLD) {
  * 			Infer which wheel is inner one from sign of passed in parameter steeringAngleDeg 
 */
 double differentialFromSteering(double steeringAngleDeg) {
-	if (abs(steeringAngleDeg) < 5.0) {
+	if (abs(steeringAngleDeg) < 5.0) {	// minimum angle for effect: to prevent power losses where small differential doesn't help much
 		return 1;
 	}
 	double turnRadius = abs(WHEELBASE / tan(steeringAngleDeg * PI / 180));
