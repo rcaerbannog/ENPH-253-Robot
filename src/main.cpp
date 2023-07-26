@@ -27,14 +27,14 @@ const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA5, PA4, PA3, PA2, PA1, PA0};	
 /*
  * TAPE FOLLOWING
  */
-const double WHEELBASE = 200;	// In mm, Lengthwise distance between front and rear wheel axles
+const double WHEELBASE = 125;	// In mm, Lengthwise distance between front and rear wheel axles
 const double WHEELSEP = 200;	// In mm, Widthwise distance between front wheels
-double POWER_SCALE = 1.00; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
+double POWER_SCALE = 0.50; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 const int MOTOR_PWM_FREQ = 50;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
 const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 us. 
 const int STEERING_SERVO_DIRECTION_SIGN = 1;	// Sign variable, +1 or -1. Switches servo direction in case the mounting direction is flipped.
-const double MAX_STEERING_ANGLE_DEG = 35.0;	// absolute physical limit of rotation, degrees
-
+const int MAX_STEERING_PULSEWIDTH_MICROS = 2000;	// absolute physical limit of left-driving servo rotation to left. Currently limited by chassis.
+const int MIN_STEERING_PULSEWIDTH_MICROS = 1200;	// absolute physical limit of left-driving servo rotation to right. Currently limited by inversion.
 const int BOMB_EJECTION_TIME_MILLIS = 1000;
 int bombEjectionEndTime = 0;
 bool bombEject = false;
@@ -52,7 +52,7 @@ See scope image sent by Yun in 'general' channel for example on 1 kHz.
 #define OLED_RESET -1 // This display does not have a reset pin accessible
 Adafruit_SSD1306 display_handler(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-double debugRightWheelAngle = 0;
+double debugLeftWheelAngle = 0;
 
 
 // put function declarations here:
@@ -60,8 +60,6 @@ void interruptBombEjection();
 void writeToDisplay(const char *str);
 double errorFunc(int tape_sensor_vals[], int TAPE_SENSOR_THRESHOLD);
 void tapeFollowing();
-void debugDisplay(int tape_sensor_vals[], int state, int error, int derivative, 
-		int leftMotorPower, int rightMotorPower, int steeringAngleDeg, int rightWheelAngle);
 double differentialFromSteering(double steeringAngleDeg);
 void steeringControl(double steeringAngleDeg);
 void motorControl(double lMotorPower, double rMotorPower);
@@ -163,8 +161,11 @@ void tapeFollowing() {
 	const int TAPE_SENSOR_THRESHOLD = 200;	// The analogRead() value above which we consider the tape sensor to be on tape
 	// Make the checkpoint sensors deliberately less sensitive to light -> more sensitive to being off tape?
 	// const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
-	const double STEERING_KP = 0.03;	// Steering angle PID proportionality constant
-	const double STEERING_KD = 0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
+	const double STEERING_KP = 10.0;	// Steering angle PID proportionality constant
+	const double STEERING_KD = 0.0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
+	// These max angles are not be achieved in reality if the servo limits are more restrictive.
+	const double MAX_STEERING_ANGLE_DEG = 40.0;	// upper bound on desired ideal steering angle. MAX_STEERING_PULSEWIDTH_MICROS PROTECTS PHYSICAL LIMIT.
+	const double MIN_STEERING_ANGLE_DEG = -40.0;	// lower bound on desired ideal steering angle. MIN_STEERING_PULSEWIDTH_MICROS PROTECTS PHYSICAL LIMIT.
 
 	// CONTROL LOOP
 	int loopCounter = 0;
@@ -238,16 +239,16 @@ void tapeFollowing() {
 			leftMotorPower = -0.15;	// make time-varying (though it wasn't before)
 			rightMotorPower = 1.0;
 		} else if (errorDiscreteState <= -2) {	// we are completely off the tape to the left
-			steeringAngleDeg = -MAX_STEERING_ANGLE_DEG;
+			steeringAngleDeg = MIN_STEERING_ANGLE_DEG;
 			leftMotorPower = 1.0;
 			//rightMotorPower = differentialFromSteering(-MAX_STEERING_ANGLE_DEG);
 			rightMotorPower = -0.15;	// make time-varying (though it wasn't before)
 		} else if (errorDiscreteState == 1) {
-			steeringAngleDeg = -MAX_STEERING_ANGLE_DEG;
+			steeringAngleDeg = MAX_STEERING_ANGLE_DEG;
 			leftMotorPower = differentialFromSteering(steeringAngleDeg);
 			rightMotorPower = 1.0;
 		} else if (errorDiscreteState == - 1) {
-			steeringAngleDeg = MAX_STEERING_ANGLE_DEG;
+			steeringAngleDeg = MIN_STEERING_ANGLE_DEG;
 			leftMotorPower = 1.0;
 			rightMotorPower = differentialFromSteering(steeringAngleDeg);
 		} else if (abs(prevErrorDiscreteState) > 0) {	// we were previously off the tape and have just come back on
@@ -261,7 +262,7 @@ void tapeFollowing() {
 			// Because we establish error once when coming back onto tape (see previous case), derivative is always well-defined
 			errorDerivative = (error - prevError);
 			steeringAngleDeg = STEERING_KP * error + STEERING_KD * errorDerivative;	// P-D control
-			steeringAngleDeg = max(-MAX_NORMAL_STEERING_ANGLE_DEG, min(MAX_NORMAL_STEERING_ANGLE_DEG, steeringAngleDeg));	// bound by 0
+			steeringAngleDeg = max(MIN_STEERING_ANGLE_DEG, min(MAX_STEERING_ANGLE_DEG, steeringAngleDeg));	// bound by 0
 			if (steeringAngleDeg >= 0) {
 				leftMotorPower = differentialFromSteering(steeringAngleDeg);
 				rightMotorPower = 1.0;
@@ -284,7 +285,7 @@ void tapeFollowing() {
 		// COMMENT OUT DEBUG DISPLAY CODE IF THERE IS NO DISPLAY, OTHERWISE EXECUTION WILL STALL
 		// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
 		// debugDisplay(tape_sensor_vals, errorDiscreteState, error, errorDerivative, 
-		//		leftMotorPower, rightMotorPower, steeringAngleDeg, debugRightWheelAngle);
+		//		leftMotorPower, rightMotorPower, steeringAngleDeg, debugLeftWheelAngle);
 		display_handler.clearDisplay();
 		display_handler.setCursor(0, 0);
 		for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%4d", tape_sensor_vals[i]);
@@ -300,17 +301,21 @@ void tapeFollowing() {
 		display_handler.println(rightMotorPower, 3);
 		display_handler.print("Steer ");
 		display_handler.print(steeringAngleDeg, 1);
-		display_handler.print(" R ");
-		display_handler.println(debugRightWheelAngle, 1);
+		display_handler.print(" L ");
+		display_handler.println(debugLeftWheelAngle, 1);
 		display_handler.printf("Loop %d\n", loopCounter);
 		display_handler.display();
 
 		// handle interrupt resolution / tasks
 		// Make a dedicated queue for this later
 		if (bombEject && millis() > bombEjectionEndTime) {
-			digitalWrite(PIN_BLOCKMOTOR_REV, LOW);
-			digitalWrite(PIN_BLOCKMOTOR_FWD, HIGH);
-			bombEject = false;
+			if (digitalRead(PIN_HALL_SENSOR) == HIGH) {	// bomb is gone: Hall sensor does not see magnetic field
+				digitalWrite(PIN_BLOCKMOTOR_REV, LOW);
+				digitalWrite(PIN_BLOCKMOTOR_FWD, HIGH);
+				bombEject = false;
+			} else {	// bomb is still there
+				bombEjectionEndTime += 1000;	// check again 1000ms later
+			}
 		}
 		
 		while (millis() < nextLoopTime);	// pause until next scheduled control loop, to ensure consistent loop time
@@ -385,18 +390,20 @@ double differentialFromSteering(double steeringAngleDeg) {
  * @param steeringAngleDeg The 'ideal steering angle' TO THE LEFT (CCW) from an imaginary front wheel on the chassis centerline.
 */
 void steeringControl(double steeringAngleDeg) {
-	steeringAngleDeg = max(-MAX_STEERING_ANGLE_DEG, (MAX_STEERING_ANGLE_DEG, steeringAngleDeg));	// bound by physical steering limit
-	double rightWheelAngle = 0;
 	if (abs(steeringAngleDeg) < 1.0) {
 		pwm_start(PIN_STEERING_SERVO, 50, SERVO_NEUTRAL_PULSEWIDTH, TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
 	}
-	double turnRadius = WHEELBASE / tan(steeringAngleDeg * PI / 180);	// trigonometry methods are by default in radians, so convert to rad
-	rightWheelAngle = (atan(WHEELBASE / (turnRadius + WHEELSEP/2))) * 180 / PI;	// servo write is in degrees, so convert back to deg	
+	double turnRadius = WHEELBASE / tan(steeringAngleDeg * PI / 180);	// trigonometry methods are by default in radians, so convert to rad.
+	// For positive steering angle to left, left wheel is inner ( radius - WHEELSEP/2), right wheel is outer (radius + WHEELSEP/2)
+	// double rightWheelAngle = (atan(WHEELBASE / (turnRadius + WHEELSEP/2))) * 180 / PI;	// servo write is in degrees, so convert back to deg	
+	double leftWheelAngle = (atan(WHEELBASE / (turnRadius - WHEELSEP/2))) * 180 / PI;	// servo write is in degrees, so convert back to deg	
 	// Servo response is linear with 90 degrees rotation to 1000us pulse width (empirical testing of MG90, MG996R)
-	pwm_start(PIN_STEERING_SERVO, 50, SERVO_NEUTRAL_PULSEWIDTH + (int) (STEERING_SERVO_DIRECTION_SIGN * (1000/90.0) * rightWheelAngle), 
+	int pulseWidthMicros = SERVO_NEUTRAL_PULSEWIDTH + (int) (STEERING_SERVO_DIRECTION_SIGN * (1000/90.0) * leftWheelAngle);
+	pulseWidthMicros = max(MIN_STEERING_PULSEWIDTH_MICROS, min(MAX_STEERING_PULSEWIDTH_MICROS, pulseWidthMicros));	// bounded by empirical physical limits
+	pwm_start(PIN_STEERING_SERVO, 50, pulseWidthMicros, 
 		TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
 
-	debugRightWheelAngle = rightWheelAngle;
+	debugLeftWheelAngle = leftWheelAngle;
 }
 
 /*
