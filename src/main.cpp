@@ -29,10 +29,9 @@ const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA5, PA4, PA3, PA2, PA1, PA0};	
  */
 const double WHEELBASE = 125;	// In mm, Lengthwise distance between front and rear wheel axles
 const double WHEELSEP = 200;	// In mm, Widthwise distance between front wheels
-double POWER_SCALE = 0.50; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
+double POWER_SCALE = 0.30; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 const int MOTOR_PWM_FREQ = 50;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
 const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 us. 
-const int STEERING_SERVO_DIRECTION_SIGN = 1;	// Sign variable, +1 or -1. Switches servo direction in case the mounting direction is flipped.
 const int MAX_STEERING_PULSEWIDTH_MICROS = 2000;	// absolute physical limit of left-driving servo rotation to left. Currently limited by chassis.
 const int MIN_STEERING_PULSEWIDTH_MICROS = 1200;	// absolute physical limit of left-driving servo rotation to right. Currently limited by inversion.
 const int BOMB_EJECTION_TIME_MILLIS = 1000;
@@ -62,6 +61,7 @@ double errorFunc(int tape_sensor_vals[], int TAPE_SENSOR_THRESHOLD);
 void tapeFollowing();
 double differentialFromSteering(double steeringAngleDeg);
 void steeringControl(double steeringAngleDeg);
+void steeringControlManual(int pulseWidthMicros);
 void motorControl(double lMotorPower, double rMotorPower);
 
 void setup() {
@@ -155,13 +155,13 @@ void tapeFollowing() {
 
 	int tape_sensor_vals[NUM_TAPE_SENSORS] = {0, 0, 0, 0};
 	bool on_tape[NUM_TAPE_SENSORS] = {true, true, true, true};
-	int prevErrorDiscreteState = 1;	// -2, -1, 0, 1, or 2 (off tape to left, on tape, off tape to right)
+	int prevErrorDiscreteState = 0;	// -2, -1, 0, 1, or 2 (off tape to left, on tape, off tape to right)
 	double prevError = 0;	// from previous control loop, used for derivative control only if prevLeftOnTape and prevRightOnTape.
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
-	const int TAPE_SENSOR_THRESHOLD = 200;	// The analogRead() value above which we consider the tape sensor to be on tape
+	const int TAPE_SENSOR_THRESHOLD = 100;	// The analogRead() value above which we consider the tape sensor to be on tape
 	// Make the checkpoint sensors deliberately less sensitive to light -> more sensitive to being off tape?
 	// const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
-	const double STEERING_KP = 10.0;	// Steering angle PID proportionality constant
+	const double STEERING_KP = 20.0;	// Steering angle PID proportionality constant
 	const double STEERING_KD = 0.0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
 	// These max angles are not be achieved in reality if the servo limits are more restrictive.
 	const double MAX_STEERING_ANGLE_DEG = 40.0;	// upper bound on desired ideal steering angle. MAX_STEERING_PULSEWIDTH_MICROS PROTECTS PHYSICAL LIMIT.
@@ -235,14 +235,14 @@ void tapeFollowing() {
 		// Now deciding what to actually do
 		if (errorDiscreteState >= 2) {	// we are completely off the tape to the right 
 			steeringAngleDeg = MAX_STEERING_ANGLE_DEG;
-			//leftMotorPower = differentialFromSteering(MAX_STEERING_ANGLE_DEG);
-			leftMotorPower = -0.15;	// make time-varying (though it wasn't before)
+			leftMotorPower = differentialFromSteering(steeringAngleDeg);
+			// leftMotorPower = -0.15;	// make time-varying (though it wasn't before)
 			rightMotorPower = 1.0;
 		} else if (errorDiscreteState <= -2) {	// we are completely off the tape to the left
 			steeringAngleDeg = MIN_STEERING_ANGLE_DEG;
 			leftMotorPower = 1.0;
-			//rightMotorPower = differentialFromSteering(-MAX_STEERING_ANGLE_DEG);
-			rightMotorPower = -0.15;	// make time-varying (though it wasn't before)
+			rightMotorPower = differentialFromSteering(steeringAngleDeg);
+			// rightMotorPower = -0.15;	// make time-varying (though it wasn't before)
 		} else if (errorDiscreteState == 1) {
 			steeringAngleDeg = MAX_STEERING_ANGLE_DEG;
 			leftMotorPower = differentialFromSteering(steeringAngleDeg);
@@ -371,7 +371,7 @@ double differentialFromSteering(double steeringAngleDeg) {
 	}
 	double turnRadius = abs(WHEELBASE / tan(steeringAngleDeg * PI / 180));
 	double differential = (turnRadius - WHEELSEP / 2) / (turnRadius + WHEELSEP / 2);
-	return differential;
+	return 0.5 * (1 + differential);	// reducing power drop by 1/2
 }
 
 /*
@@ -398,12 +398,23 @@ void steeringControl(double steeringAngleDeg) {
 	// double rightWheelAngle = (atan(WHEELBASE / (turnRadius + WHEELSEP/2))) * 180 / PI;	// servo write is in degrees, so convert back to deg	
 	double leftWheelAngle = (atan(WHEELBASE / (turnRadius - WHEELSEP/2))) * 180 / PI;	// servo write is in degrees, so convert back to deg	
 	// Servo response is linear with 90 degrees rotation to 1000us pulse width (empirical testing of MG90, MG996R)
-	int pulseWidthMicros = SERVO_NEUTRAL_PULSEWIDTH + (int) (STEERING_SERVO_DIRECTION_SIGN * (1000/90.0) * leftWheelAngle);
+	int pulseWidthMicros = SERVO_NEUTRAL_PULSEWIDTH + (int) ((1000.0/90.0) * leftWheelAngle);
 	pulseWidthMicros = max(MIN_STEERING_PULSEWIDTH_MICROS, min(MAX_STEERING_PULSEWIDTH_MICROS, pulseWidthMicros));	// bounded by empirical physical limits
 	pwm_start(PIN_STEERING_SERVO, 50, pulseWidthMicros, 
 		TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
 
 	debugLeftWheelAngle = leftWheelAngle;
+}
+
+/*
+ * Commands the servo with a certain pulsewidth corresponding to angle. ALLOWS OVERRIDING OF PHYSICAL LIMITS.
+*/
+void steeringControlManual(int pulseWidthMicros) {
+	// Servo response is linear with 90 degrees rotation to 1000us pulse width (empirical testing of MG90, MG996R)
+	pwm_start(PIN_STEERING_SERVO, 50, pulseWidthMicros, 
+		TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
+
+	debugLeftWheelAngle = (pulseWidthMicros - SERVO_NEUTRAL_PULSEWIDTH) * (90.0/1000.0);
 }
 
 /*
