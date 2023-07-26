@@ -29,7 +29,7 @@ const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA5, PA4, PA3, PA2, PA1, PA0};	
  */
 const double WHEELBASE = 125;	// In mm, Lengthwise distance between front and rear wheel axles
 const double WHEELSEP = 200;	// In mm, Widthwise distance between front wheels
-double POWER_SCALE = 0.30; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
+double POWER_SCALE = 0.25; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 const int MOTOR_PWM_FREQ = 50;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
 const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 us. 
 const int MAX_STEERING_PULSEWIDTH_MICROS = 2000;	// absolute physical limit of left-driving servo rotation to left. Currently limited by chassis.
@@ -251,24 +251,30 @@ void tapeFollowing() {
 			steeringAngleDeg = MIN_STEERING_ANGLE_DEG;
 			leftMotorPower = 1.0;
 			rightMotorPower = differentialFromSteering(steeringAngleDeg);
-		} else if (abs(prevErrorDiscreteState) > 0) {	// we were previously off the tape and have just come back on
+		} else if (prevErrorDiscreteState > 0) {	// we were previously off the tape and have just come back on
 			// Set steering straight to stabilize for one control loop
 			steeringAngleDeg = 0;
-			leftMotorPower = 1.0;
-			rightMotorPower = 1.0;
-			// since we are coming back onto the tape line, the sign of the derivative is opposite the direction of previous error
-			errorDerivative = (prevErrorDiscreteState > 0) ? -1.0 : 1.0;	
+			leftMotorPower = 1.0;	// accelerate out of previous differential
+			rightMotorPower = 0.9;
+			errorDerivative = -1.0;	// since we are coming back onto the tape line, sign of the derivative is opposite previous error direction
+		} else if (prevErrorDiscreteState < 0) {	// we were previously off the tape to the left and have just come back on
+			steeringAngleDeg = 0;
+			leftMotorPower = 0.9;
+			rightMotorPower = 1.0;	// accelerate out of previous differential
+			errorDerivative = 1.0;
 		} else {	// Just plain error control
 			// Because we establish error once when coming back onto tape (see previous case), derivative is always well-defined
 			errorDerivative = (error - prevError);
 			steeringAngleDeg = STEERING_KP * error + STEERING_KD * errorDerivative;	// P-D control
 			steeringAngleDeg = max(MIN_STEERING_ANGLE_DEG, min(MAX_STEERING_ANGLE_DEG, steeringAngleDeg));	// bound by 0
 			if (steeringAngleDeg >= 0) {
-				leftMotorPower = differentialFromSteering(steeringAngleDeg);
+				leftMotorPower = 1.0;
+				// leftMotorPower = differentialFromSteering(steeringAngleDeg);
 				rightMotorPower = 1.0;
 			} else {
 				leftMotorPower = 1.0;
-				rightMotorPower = differentialFromSteering(rightMotorPower);
+				// rightMotorPower = differentialFromSteering(rightMotorPower);
+				rightMotorPower = 1.0;
 			}
 		}
 
@@ -304,6 +310,7 @@ void tapeFollowing() {
 		display_handler.print(" L ");
 		display_handler.println(debugLeftWheelAngle, 1);
 		display_handler.printf("Loop %d\n", loopCounter);
+		display_handler.printf("Time %d", millis() - (nextLoopTime - 20));
 		display_handler.display();
 
 		// handle interrupt resolution / tasks
@@ -371,7 +378,7 @@ double differentialFromSteering(double steeringAngleDeg) {
 	}
 	double turnRadius = abs(WHEELBASE / tan(steeringAngleDeg * PI / 180));
 	double differential = (turnRadius - WHEELSEP / 2) / (turnRadius + WHEELSEP / 2);
-	return 0.5 * (1 + differential);	// reducing power drop by 1/2
+	return differential;
 }
 
 /*
@@ -400,8 +407,7 @@ void steeringControl(double steeringAngleDeg) {
 	// Servo response is linear with 90 degrees rotation to 1000us pulse width (empirical testing of MG90, MG996R)
 	int pulseWidthMicros = SERVO_NEUTRAL_PULSEWIDTH + (int) ((1000.0/90.0) * leftWheelAngle);
 	pulseWidthMicros = max(MIN_STEERING_PULSEWIDTH_MICROS, min(MAX_STEERING_PULSEWIDTH_MICROS, pulseWidthMicros));	// bounded by empirical physical limits
-	pwm_start(PIN_STEERING_SERVO, 50, pulseWidthMicros, 
-		TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
+	pwm_start(PIN_STEERING_SERVO, 50, pulseWidthMicros, TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
 
 	debugLeftWheelAngle = leftWheelAngle;
 }
@@ -411,8 +417,7 @@ void steeringControl(double steeringAngleDeg) {
 */
 void steeringControlManual(int pulseWidthMicros) {
 	// Servo response is linear with 90 degrees rotation to 1000us pulse width (empirical testing of MG90, MG996R)
-	pwm_start(PIN_STEERING_SERVO, 50, pulseWidthMicros, 
-		TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
+	pwm_start(PIN_STEERING_SERVO, 50, pulseWidthMicros, TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
 
 	debugLeftWheelAngle = (pulseWidthMicros - SERVO_NEUTRAL_PULSEWIDTH) * (90.0/1000.0);
 }
