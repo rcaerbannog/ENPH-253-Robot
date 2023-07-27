@@ -161,8 +161,8 @@ void tapeFollowing() {
 	const int TAPE_SENSOR_THRESHOLD = 100;	// The analogRead() value above which we consider the tape sensor to be on tape
 	// Make the checkpoint sensors deliberately less sensitive to light -> more sensitive to being off tape?
 	// const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
-	const double STEERING_KP = 20.0;	// Steering angle PID proportionality constant
-	const double STEERING_KD = 0.0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
+	const double STEERING_KP = 30.0;	// Steering angle PID proportionality constant
+	const double STEERING_KD = 6.0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
 	// These max angles are not be achieved in reality if the servo limits are more restrictive.
 	const double MAX_STEERING_ANGLE_DEG = 40.0;	// upper bound on desired ideal steering angle. MAX_STEERING_PULSEWIDTH_MICROS PROTECTS PHYSICAL LIMIT.
 	const double MIN_STEERING_ANGLE_DEG = -40.0;	// lower bound on desired ideal steering angle. MIN_STEERING_PULSEWIDTH_MICROS PROTECTS PHYSICAL LIMIT.
@@ -235,14 +235,14 @@ void tapeFollowing() {
 		// Now deciding what to actually do
 		if (errorDiscreteState >= 2) {	// we are completely off the tape to the right 
 			steeringAngleDeg = MAX_STEERING_ANGLE_DEG;
-			leftMotorPower = differentialFromSteering(steeringAngleDeg);
-			// leftMotorPower = -0.15;	// make time-varying (though it wasn't before)
+			// leftMotorPower = differentialFromSteering(steeringAngleDeg);
+			leftMotorPower = -0.5;	// make time-varying (though it wasn't before)
 			rightMotorPower = 1.0;
 		} else if (errorDiscreteState <= -2) {	// we are completely off the tape to the left
 			steeringAngleDeg = MIN_STEERING_ANGLE_DEG;
 			leftMotorPower = 1.0;
-			rightMotorPower = differentialFromSteering(steeringAngleDeg);
-			// rightMotorPower = -0.15;	// make time-varying (though it wasn't before)
+			// rightMotorPower = differentialFromSteering(steeringAngleDeg);
+			rightMotorPower = -0.5;	// make time-varying (though it wasn't before)
 		} else if (errorDiscreteState == 1) {
 			steeringAngleDeg = MAX_STEERING_ANGLE_DEG;
 			leftMotorPower = differentialFromSteering(steeringAngleDeg);
