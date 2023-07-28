@@ -22,7 +22,7 @@
 //#define PIN_CHECKPOINT_SENSOR_RIGHT PA0	// as analog input
 #define PIN_STEERING_SERVO PA_6	// as PWM output - servo control
 #define NUM_TAPE_SENSORS 6	// Rep invariant: MUST be the same as length of PINS_TAPE_SENSORS
-const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA5, PA4, PA3, PA2, PA1, PA0};	// as analog input. In order from left to right sensors.
+const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA0, PA1, PA2, PA3, PA4, PA5};	// as analog input. In order from left to right sensors.
 
 /*
  * TAPE FOLLOWING
@@ -33,7 +33,7 @@ double POWER_SCALE = 0.20; // Power setting, scales all power sent to the motors
 const int MOTOR_PWM_FREQ = 50;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
 const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 us. 
 const int MAX_STEERING_PULSEWIDTH_MICROS = 2000;	// absolute physical limit of left-driving servo rotation to left. Currently limited by chassis.
-const int MIN_STEERING_PULSEWIDTH_MICROS = 1200;	// absolute physical limit of left-driving servo rotation to right. Currently limited by inversion.
+const int MIN_STEERING_PULSEWIDTH_MICROS = 1180;	// absolute physical limit of left-driving servo rotation to right. Currently limited by inversion.
 const int BOMB_EJECTION_TIME_MILLIS = 1000;
 int bombEjectionEndTime = 0;
 bool bombEject = false;
@@ -161,8 +161,8 @@ void tapeFollowing() {
 	const int TAPE_SENSOR_THRESHOLD = 100;	// The analogRead() value above which we consider the tape sensor to be on tape
 	// Make the checkpoint sensors deliberately less sensitive to light -> more sensitive to being off tape?
 	// const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
-	const double STEERING_KP = 30.0;	// Steering angle PID proportionality constant
-	const double STEERING_KD = 6.0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
+	const double STEERING_KP = 20.0;	// Steering angle PID proportionality constant
+	const double STEERING_KD = 0.0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
 	// These max angles are not be achieved in reality if the servo limits are more restrictive.
 	const double MAX_STEERING_ANGLE_DEG = 40.0;	// upper bound on desired ideal steering angle. MAX_STEERING_PULSEWIDTH_MICROS PROTECTS PHYSICAL LIMIT.
 	const double MIN_STEERING_ANGLE_DEG = -40.0;	// lower bound on desired ideal steering angle. MIN_STEERING_PULSEWIDTH_MICROS PROTECTS PHYSICAL LIMIT.
@@ -234,15 +234,15 @@ void tapeFollowing() {
 
 		// Now deciding what to actually do
 		if (errorDiscreteState >= 2) {	// we are completely off the tape to the right 
-			steeringAngleDeg = MAX_STEERING_ANGLE_DEG;
+			steeringAngleDeg = 0.5 * MAX_STEERING_ANGLE_DEG;
 			// leftMotorPower = differentialFromSteering(steeringAngleDeg);
-			leftMotorPower = -0.5;	// make time-varying (though it wasn't before)
+			leftMotorPower = -0.40;	// make time-varying (though it wasn't before)
 			rightMotorPower = 1.0;
 		} else if (errorDiscreteState <= -2) {	// we are completely off the tape to the left
-			steeringAngleDeg = MIN_STEERING_ANGLE_DEG;
+			steeringAngleDeg = 0.5 * MIN_STEERING_ANGLE_DEG;
 			leftMotorPower = 1.0;
 			// rightMotorPower = differentialFromSteering(steeringAngleDeg);
-			rightMotorPower = -0.5;	// make time-varying (though it wasn't before)
+			rightMotorPower = -0.40;	// make time-varying (though it wasn't before)
 		} else if (errorDiscreteState == 1) {
 			steeringAngleDeg = MAX_STEERING_ANGLE_DEG;
 			leftMotorPower = differentialFromSteering(steeringAngleDeg);
@@ -288,31 +288,6 @@ void tapeFollowing() {
 
 		digitalWrite(PIN_LED_BUILTIN, LOW);
 
-		// COMMENT OUT DEBUG DISPLAY CODE IF THERE IS NO DISPLAY, OTHERWISE EXECUTION WILL STALL
-		// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
-		// debugDisplay(tape_sensor_vals, errorDiscreteState, error, errorDerivative, 
-		//		leftMotorPower, rightMotorPower, steeringAngleDeg, debugLeftWheelAngle);
-		display_handler.clearDisplay();
-		display_handler.setCursor(0, 0);
-		for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%4d", tape_sensor_vals[i]);
-		display_handler.println();
-		display_handler.printf("St %1d", errorDiscreteState);
-		display_handler.print(" E ");
-		display_handler.print(error, 2);
-		display_handler.print(" dE ");
-		display_handler.println(errorDerivative, 2);
-		display_handler.print("LM ");
-		display_handler.print(leftMotorPower, 3);
-		display_handler.print(" RM ");
-		display_handler.println(rightMotorPower, 3);
-		display_handler.print("Steer ");
-		display_handler.print(steeringAngleDeg, 1);
-		display_handler.print(" L ");
-		display_handler.println(debugLeftWheelAngle, 1);
-		display_handler.printf("Loop %d\n", loopCounter);
-		display_handler.printf("Time %d", millis() - (nextLoopTime - 20));
-		display_handler.display();
-
 		// handle interrupt resolution / tasks
 		// Make a dedicated queue for this later
 		if (bombEject && millis() > bombEjectionEndTime) {
@@ -324,9 +299,35 @@ void tapeFollowing() {
 				bombEjectionEndTime += 1000;	// check again 1000ms later
 			}
 		}
+
+		// COMMENT OUT DEBUG DISPLAY CODE IF THERE IS NO DISPLAY, OTHERWISE EXECUTION WILL STALL
+		// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
+		// debugDisplay(tape_sensor_vals, errorDiscreteState, error, errorDerivative, 
+		//		leftMotorPower, rightMotorPower, steeringAngleDeg, debugLeftWheelAngle);
+		// display_handler.clearDisplay();
+		// display_handler.setCursor(0, 0);
+		// for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%5d", tape_sensor_vals[i]);
+		// display_handler.println();
+		// display_handler.printf("St %1d", errorDiscreteState);
+		// display_handler.print(" E ");
+		// display_handler.print(error, 2);
+		// display_handler.print(" dE ");
+		// display_handler.println(errorDerivative, 2);
+		// display_handler.print("LM ");
+		// display_handler.print(leftMotorPower, 3);
+		// display_handler.print(" RM ");
+		// display_handler.println(rightMotorPower, 3);
+		// display_handler.print("Steer ");
+		// display_handler.print(steeringAngleDeg, 1);
+		// display_handler.print(" L ");
+		// display_handler.println(debugLeftWheelAngle, 1);
+		// display_handler.printf("Loop %d\n", loopCounter);
+		// display_handler.display();
+		// display_handler.printf("Time %d", millis() - (nextLoopTime - 20));
+		// display_handler.display();
 		
 		while (millis() < nextLoopTime);	// pause until next scheduled control loop, to ensure consistent loop time
-		nextLoopTime = millis() + LOOP_TIME_MILLIS;
+		nextLoopTime += LOOP_TIME_MILLIS;
 		loopCounter++;
 	}
 	// right now, the control loop should never end. If we get here there's been an error.
