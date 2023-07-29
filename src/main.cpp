@@ -29,7 +29,7 @@ const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA0, PA1, PA2, PA3, PA4, PA5};	
  */
 const double WHEELBASE = 125;	// In mm, Lengthwise distance between front and rear wheel axles
 const double WHEELSEP = 200;	// In mm, Widthwise distance between front wheels
-double POWER_SCALE = 0.20; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
+const double DEFAULT_POWER = 0.20; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 const int MOTOR_PWM_FREQ = 50;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
 const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 us. 
 const int MAX_STEERING_PULSEWIDTH_MICROS = 2000;	// absolute physical limit of left-driving servo rotation to left. Currently limited by chassis.
@@ -59,7 +59,6 @@ void interruptBombEjection();
 void writeToDisplay(const char *str);
 double errorFunc(int tape_sensor_vals[], int TAPE_SENSOR_THRESHOLD);
 void tapeFollowing();
-double differentialFromSteering(double steeringAngleDeg);
 void steeringControl(double steeringAngleDeg);
 void steeringControlManual(int pulseWidthMicros);
 void motorControl(double lMotorPower, double rMotorPower);
@@ -149,13 +148,11 @@ void tapeFollowing() {
 
 	*/
 
-	const int LOOP_TIME_MILLIS = 20;	// Control loop period. Must be enough time for the code inside to execute!
-	const double MAX_NORMAL_STEERING_ANGLE_DEG = 30.0; // soft limit when doing P-D control on tape, degrees
+	const int LOOP_TIME_MILLIS = 40;	// Control loop period. Must be enough time for the code inside to execute!
 	int nextLoopTime = millis() + LOOP_TIME_MILLIS;
 
-	int tape_sensor_vals[NUM_TAPE_SENSORS] = {0, 0, 0, 0};
+	int tape_sensor_vals[NUM_TAPE_SENSORS] = {0, 0, 0, 0, 0, 0};
 	bool on_tape[NUM_TAPE_SENSORS] = {true, true, true, true};
-	int prevErrorDiscreteState = 0;	// -2, -1, 0, 1, or 2 (off tape to left, on tape, off tape to right)
 	double prevError = 0;	// from previous control loop, used for derivative control only if prevLeftOnTape and prevRightOnTape.
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
 	const int TAPE_SENSOR_THRESHOLD = 100;	// The analogRead() value above which we consider the tape sensor to be on tape
@@ -163,130 +160,58 @@ void tapeFollowing() {
 	// const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
 	const double STEERING_KP = 20.0;	// Steering angle PID proportionality constant
 	const double STEERING_KD = 0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
-	// These max angles are not be achieved in reality if the servo limits are more restrictive.
-	const double MAX_STEERING_ANGLE_DEG = 40.0;	// upper bound on desired ideal steering angle. MAX_STEERING_PULSEWIDTH_MICROS PROTECTS PHYSICAL LIMIT.
-	const double MIN_STEERING_ANGLE_DEG = -40.0;	// lower bound on desired ideal steering angle. MIN_STEERING_PULSEWIDTH_MICROS PROTECTS PHYSICAL LIMIT.
+	const double MOTORDIF_KP = 20.0;
+	const double MOTORDIF_KD = 0.0;
 
 	// CONTROL LOOP
 	int loopCounter = 0;
 	while (true) {
 		digitalWrite(PIN_LED_BUILTIN, HIGH);	// DEBUG ONLY, for monitoring control loop progression without LCD display
-		int errorDiscreteState = prevErrorDiscreteState;	// should be between -NUM_TAPE_SENSORS and +NUM_TAPE_SENSORS, positive when off to right
-		double error = prevError;	// Unitless; Positive error means to right of tape, negative to left; prevError only for debug
-		double errorDerivative = prevErrorDerivative;	// prevErrorDerivative only for debug
-		double steeringAngleDeg = 999.9; // In degrees; Positive angle means steering to left (CCW circling)
-		double leftMotorPower = 1.0;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
-		double rightMotorPower = 1.0;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
+		double error;	// Unitless; Positive error means to right of tape, negative to left; prevError only for debug
+		double errorDerivative;	// prevErrorDerivative only for debug
+		double steeringAngleDeg; // In degrees; Positive angle means steering to left (CCW circling)
+		double motorDif;	// Out of 1.0, power added to right motor vs left
+		double leftMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
+		double rightMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
 
-		// bool rightOnCheckpoint = analogRead(PIN_CHECKPOINT_SENSOR_RIGHT > CHECKPOINT_SENSOR_THRESHOLD);
-		// bool leftOnCheckpoint = analogRead(PIN_CHECKPOINT_SENSOR_LEFT > CHECKPOINT_SENSOR_THRESHOLD);
-
-		/* if (rightOnCheckpoint || leftOnCheckpoint) {	// freeze current state
-			display_handler.print("On checkpoint!");
-			display_handler.display();
-			if (abs(prevErrorDiscreteState) < 4) {
-				steeringControl(0.0);
-			}	// inferred: otherwise, continue max steering
-			while (millis() < nextLoopTime);	// pause until next scheduled control loop, to ensure consistent loop time
-			nextLoopTime = millis() + LOOP_TIME_MILLIS;
-			// Implied: else, if completely off tape then continue previous max steering
-			// This also freezes the previous state
-			// Add a waiting loop in here (separate state)?
-		} */
-
+		bool offTape = true;
 		for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
 			tape_sensor_vals[i] = analogRead(PINS_TAPE_SENSORS[i]);
 			on_tape[i] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
-		}
-		
-		// Determination of discrete error state (digital sensors or debug)
-		bool offTape = true;
-		bool onlyLeftmostOn = on_tape[0];
-		bool onlyRightmostOn = on_tape[NUM_TAPE_SENSORS - 1];
-		for (int sensor = 0; sensor < NUM_TAPE_SENSORS; sensor++) {
-			if (on_tape[sensor]) {	// Strictly greater than required for error determination
+			if (on_tape[i]) {
 				offTape = false;
-				if (sensor != 0) onlyLeftmostOn = false;
-				if (sensor != NUM_TAPE_SENSORS - 1) onlyRightmostOn = false;
 			}
 		}
 
 		if (offTape) {
 			if (prevError >= 0)	{	// relies on prevError not being updated to avoid wiping the check condition
-				errorDiscreteState = 2;
+				error = (NUM_TAPE_SENSORS) / 2.0;
 			}
 			else {	// prevError < 0
-				errorDiscreteState = -2;
+				error = - (NUM_TAPE_SENSORS) / 2.0;
 			}
 			// See if using sign of previous derivative helps here
 			// If we completely skipped over the tape line, then god help us we can't see that
 			// Perhaps do similar open-loop control to checkpoint: keep scanning as often as possible until we return to the tape line
 		} else {
 			error = errorFunc(tape_sensor_vals, TAPE_SENSOR_THRESHOLD);	// error is calculated here!
-			if (onlyLeftmostOn) {
-				errorDiscreteState = 1;
-			} else if (onlyRightmostOn) {
-				errorDiscreteState = -1;
-			} else {
-				errorDiscreteState = 0;
-			}
 		}
 
 		// Now deciding what to actually do
-		if (errorDiscreteState >= 2) {	// we are completely off the tape to the right 
-			steeringAngleDeg = 0.5 * MAX_STEERING_ANGLE_DEG;
-			// leftMotorPower = differentialFromSteering(steeringAngleDeg);
-			leftMotorPower = -0.40;	// make time-varying (though it wasn't before)
-			rightMotorPower = 1.0;
-		} else if (errorDiscreteState <= -2) {	// we are completely off the tape to the left
-			steeringAngleDeg = 0.5 * MIN_STEERING_ANGLE_DEG;
-			leftMotorPower = 1.0;
-			// rightMotorPower = differentialFromSteering(steeringAngleDeg);
-			rightMotorPower = -0.4;	// make time-varying (though it wasn't before)
-		} else if (errorDiscreteState == 1) {
-			steeringAngleDeg = MAX_STEERING_ANGLE_DEG;
-			leftMotorPower = -0.3;
-			rightMotorPower = 0.8;
-		} else if (errorDiscreteState == - 1) {
-			steeringAngleDeg = MIN_STEERING_ANGLE_DEG;
-			leftMotorPower = 0.8;
-			rightMotorPower = -0.3;
-		} else if (prevErrorDiscreteState > 0) {	// we were previously off the tape and have just come back on
-			// Set steering straight to stabilize for one control loop
-			steeringAngleDeg = 0;
-			leftMotorPower = 1.0;	// accelerate out of previous differential
-			rightMotorPower = 0.9;
-			errorDerivative = -1.0;	// since we are coming back onto the tape line, sign of the derivative is opposite previous error direction
-		} else if (prevErrorDiscreteState < 0) {	// we were previously off the tape to the left and have just come back on
-			steeringAngleDeg = 0;
-			leftMotorPower = 0.9;
-			rightMotorPower = 1.0;	// accelerate out of previous differential
-			errorDerivative = 1.0;
-		} else {	// Just plain error control
-			// Because we establish error once when coming back onto tape (see previous case), derivative is always well-defined
-			errorDerivative = (error - prevError);
-			steeringAngleDeg = STEERING_KP * error + STEERING_KD * errorDerivative;	// P-D control
-			steeringAngleDeg = max(MIN_STEERING_ANGLE_DEG, min(MAX_STEERING_ANGLE_DEG, steeringAngleDeg));	// bound by 0
-			if (steeringAngleDeg >= 0) {
-				leftMotorPower = 1.0;
-				// leftMotorPower = differentialFromSteering(steeringAngleDeg);
-				rightMotorPower = 1.0;
-			} else {
-				leftMotorPower = 1.0;
-				// rightMotorPower = differentialFromSteering(rightMotorPower);
-				rightMotorPower = 1.0;
-			}
-		}
+		// For now, avoid case-based control
+		// Set neutral motor power to 0.5 and add power (fraction or percentage?) to this
+		// Encoder-based speed control can come later
+		errorDerivative = (error - prevError) / LOOP_TIME_MILLIS;
+		steeringAngleDeg = STEERING_KP * error + STEERING_KD * errorDerivative;
+		motorDif = MOTORDIF_KD * error + MOTORDIF_KD * errorDerivative;
+		leftMotorPower = DEFAULT_POWER - motorDif;
+		rightMotorPower = DEFAULT_POWER + motorDif;
 
 		steeringControl(steeringAngleDeg);
 		motorControl(leftMotorPower, rightMotorPower);
 		
-
-		prevErrorDiscreteState = errorDiscreteState;
 		prevError = error;
 		prevErrorDerivative = errorDerivative;
-
-		digitalWrite(PIN_LED_BUILTIN, LOW);
 
 		// handle interrupt resolution / tasks
 		// Make a dedicated queue for this later
@@ -300,34 +225,37 @@ void tapeFollowing() {
 			}
 		}
 
+		digitalWrite(PIN_LED_BUILTIN, LOW);
+
 		// COMMENT OUT DEBUG DISPLAY CODE IF THERE IS NO DISPLAY, OTHERWISE EXECUTION WILL STALL
 		// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
-		// debugDisplay(tape_sensor_vals, errorDiscreteState, error, errorDerivative, 
-		//		leftMotorPower, rightMotorPower, steeringAngleDeg, debugLeftWheelAngle);
-		// display_handler.clearDisplay();
-		// display_handler.setCursor(0, 0);
-		// for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%5d", tape_sensor_vals[i]);
-		// display_handler.println();
-		// display_handler.printf("St %1d", errorDiscreteState);
-		// display_handler.print(" E ");
-		// display_handler.print(error, 2);
-		// display_handler.print(" dE ");
-		// display_handler.println(errorDerivative, 2);
-		// display_handler.print("LM ");
-		// display_handler.print(leftMotorPower, 3);
-		// display_handler.print(" RM ");
-		// display_handler.println(rightMotorPower, 3);
-		// display_handler.print("Steer ");
-		// display_handler.print(steeringAngleDeg, 1);
-		// display_handler.print(" L ");
-		// display_handler.println(debugLeftWheelAngle, 1);
-		// display_handler.printf("Loop %d\n", loopCounter);
-		// display_handler.display();
-		// display_handler.printf("Time %d", millis() - (nextLoopTime - 20));
-		// display_handler.display();
+		display_handler.clearDisplay();
+		display_handler.setCursor(0, 0);
+		for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%5d", tape_sensor_vals[i]);
+		display_handler.println();
+		display_handler.print(" E ");
+		display_handler.print(error, 2);
+		display_handler.print(" dE ");
+		display_handler.println(errorDerivative, 2);
+		display_handler.print("LM ");
+		display_handler.print(leftMotorPower, 3);
+		display_handler.print(" RM ");
+		display_handler.println(rightMotorPower, 3);
+		display_handler.print("Steer ");
+		display_handler.print(steeringAngleDeg, 1);
+		display_handler.print(" L ");
+		display_handler.println(debugLeftWheelAngle, 1);
+		display_handler.printf("Loop %d\n", loopCounter);
+		display_handler.display();
+		display_handler.printf("Time %d", millis() - (nextLoopTime - 20));
+		display_handler.display();
 		
-		while (millis() < nextLoopTime);	// pause until next scheduled control loop, to ensure consistent loop time
-		nextLoopTime += LOOP_TIME_MILLIS;
+		if (millis() >= nextLoopTime) {
+			nextLoopTime = millis() + LOOP_TIME_MILLIS;
+		} else {
+			while (millis() < nextLoopTime);	// pause until next scheduled control loop, to ensure consistent loop time synced with servo PWM frequency
+			nextLoopTime += LOOP_TIME_MILLIS;	// may add emergency handling if we have exceeded the previous loop time
+		}
 		loopCounter++;
 	}
 	// right now, the control loop should never end. If we get here there's been an error.
@@ -361,25 +289,6 @@ double errorFunc(int tape_sensor_vals[], int TAPE_SENSOR_THRESHOLD) {
 	}
 	double error = 0.5 * (NUM_TAPE_SENSORS - 1) - ((double) sumSensorValsPosWeighted) / ((double) sumSensorVals);
 	return error;
-}
-
-/*
- * Calculates speed differential for back driven wheels when turning. SPEED, NOT POWER. 
- * This is probably useless for small steering angles / fast oscillation due to system inertia.
- * ONLY use for large speed differential.
- *
- * @param steeringAngleDeg The 'ideal steering angle' TO THE LEFT (CCW) from an imaginary front wheel on the chassis centerline.
- * @return The differential speed ratio of the innter (slower) back wheel to the outer (faster) wheel for this steering angle. 
- * 			Between -1 and 1: 1 for same direction and -1 for opposite direction
- * 			Infer which wheel is inner one from sign of passed in parameter steeringAngleDeg 
-*/
-double differentialFromSteering(double steeringAngleDeg) {
-	if (abs(steeringAngleDeg) < 5.0) {	// minimum angle for effect: to prevent power losses where small differential doesn't help much
-		return 1;
-	}
-	double turnRadius = abs(WHEELBASE / tan(steeringAngleDeg * PI / 180));
-	double differential = (turnRadius - WHEELSEP / 2) / (turnRadius + WHEELSEP / 2);
-	return differential;
 }
 
 /*
@@ -424,8 +333,7 @@ void steeringControlManual(int pulseWidthMicros) {
 }
 
 /*
- * Sends power to the motor by modulating power through the H-bridges. Scales power by global constant POWER_SCALE.
- * (Current implementation: via the gate drivers.)
+ * Sends power to the motor by modulating power through the H-bridges. (Current implementation: via the gate drivers.)
  * 
  * IDEAS FOR IMPROVEMENT:
  * Add smoothing: don't change unless new motor powers are far enough from previous powers. (Greater dist -> shorter time). 
@@ -434,16 +342,19 @@ void steeringControlManual(int pulseWidthMicros) {
  * 	Active braking may inject excessive noise by back-EMF? 
  * 	Acceleration jerk to full power for ~20-100ms to get moving and overcome static friction? 
  * 
- * @param lMotorPower The power to send to the left motor, signed for direction. Between -1 (full reverse) and 1 (full forwards), with 0 being off.
- * @param rMotorPower Same for the right motor, between -1 and 1.
+ * @param lMotorPower The power to send to the left motor, signed for direction. 
+ * 	Inputs truncated to between -1 (full reverse) and 1 (full forwards), with 0 being off.
+ * @param rMotorPower Same for the right motor, truncated to between -1 and 1.
  */
 void motorControl(double lMotorPower, double rMotorPower) {
+	lMotorPower = max(-1.0, min(1.0, lMotorPower));
+	rMotorPower = max(-1.0, min(1.0, rMotorPower));
 	if (lMotorPower > 0) {	// forwards
 		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
-		pwm_start(PIN_LMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * POWER_SCALE * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
+		pwm_start(PIN_LMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else if (lMotorPower < 0) {	// reverse
 		pwm_start(PIN_LMOTOR_FWD, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
-		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, (int) (1023 * POWER_SCALE * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
+		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, (int) (1023 * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else {	// unpowered / stop
 		pwm_start(PIN_LMOTOR_FWD, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
@@ -451,10 +362,10 @@ void motorControl(double lMotorPower, double rMotorPower) {
 
 	if (rMotorPower > 0) {	// forwards
 		pwm_start(PIN_RMOTOR_REV, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
-		pwm_start(PIN_RMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * POWER_SCALE * rMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
+		pwm_start(PIN_RMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * rMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else if (rMotorPower < 0) {	// reverse
 		pwm_start(PIN_RMOTOR_FWD, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
-		pwm_start(PIN_RMOTOR_REV, MOTOR_PWM_FREQ, (int) (1023 * POWER_SCALE * rMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
+		pwm_start(PIN_RMOTOR_REV, MOTOR_PWM_FREQ, (int) (1023 * rMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else {	// unpowered / stop
 		pwm_start(PIN_RMOTOR_FWD, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 		pwm_start(PIN_RMOTOR_REV, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
