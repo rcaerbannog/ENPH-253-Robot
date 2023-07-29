@@ -12,7 +12,7 @@
 #define PIN_RMOTOR_FWD PA_10	// as PWM output - H-bridge driver
 #define PIN_RMOTOR_REV PA_11	// as PWM output - H-bridge driver
 
-#define PIN_HALL_SENSOR PB13	// as digital input
+#define PIN_HALL_SENSOR PB5	// as digital input
 #define PIN_BLOCKMOTOR_FWD PB14	// as digital output (non-PWM, so max speed)
 #define PIN_BLOCKMOTOR_REV PB15	// as digital output (non-PWM, so max speed)
 
@@ -162,7 +162,7 @@ void tapeFollowing() {
 	// Make the checkpoint sensors deliberately less sensitive to light -> more sensitive to being off tape?
 	// const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
 	const double STEERING_KP = 20.0;	// Steering angle PID proportionality constant
-	const double STEERING_KD = 6.0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
+	const double STEERING_KD = 0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
 	// These max angles are not be achieved in reality if the servo limits are more restrictive.
 	const double MAX_STEERING_ANGLE_DEG = 40.0;	// upper bound on desired ideal steering angle. MAX_STEERING_PULSEWIDTH_MICROS PROTECTS PHYSICAL LIMIT.
 	const double MIN_STEERING_ANGLE_DEG = -40.0;	// lower bound on desired ideal steering angle. MIN_STEERING_PULSEWIDTH_MICROS PROTECTS PHYSICAL LIMIT.
@@ -242,15 +242,15 @@ void tapeFollowing() {
 			steeringAngleDeg = 0.5 * MIN_STEERING_ANGLE_DEG;
 			leftMotorPower = 1.0;
 			// rightMotorPower = differentialFromSteering(steeringAngleDeg);
-			rightMotorPower = -0.40;	// make time-varying (though it wasn't before)
+			rightMotorPower = -0.4;	// make time-varying (though it wasn't before)
 		} else if (errorDiscreteState == 1) {
 			steeringAngleDeg = MAX_STEERING_ANGLE_DEG;
-			leftMotorPower = differentialFromSteering(steeringAngleDeg);
-			rightMotorPower = 1.0;
+			leftMotorPower = -0.3;
+			rightMotorPower = 0.8;
 		} else if (errorDiscreteState == - 1) {
 			steeringAngleDeg = MIN_STEERING_ANGLE_DEG;
-			leftMotorPower = 1.0;
-			rightMotorPower = differentialFromSteering(steeringAngleDeg);
+			leftMotorPower = 0.8;
+			rightMotorPower = -0.3;
 		} else if (prevErrorDiscreteState > 0) {	// we were previously off the tape and have just come back on
 			// Set steering straight to stabilize for one control loop
 			steeringAngleDeg = 0;
