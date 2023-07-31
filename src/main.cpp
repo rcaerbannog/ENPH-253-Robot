@@ -62,6 +62,9 @@ void steeringControl(double steeringAngleDeg);
 void steeringControlManual(int pulseWidthMicros);
 void motorControl(double lMotorPower, double rMotorPower);
 
+//Define serial pins
+HardwareSerial Serial3(PB11, PB10);
+
 void setup() {
 	pinMode(PIN_LMOTOR_FWD, OUTPUT);
 	pinMode(PIN_LMOTOR_REV, OUTPUT);
@@ -75,7 +78,7 @@ void setup() {
 	pinMode(PIN_STEERING_SERVO, OUTPUT);
 
 	pinMode(PIN_LED_BUILTIN, OUTPUT);
-	
+
   	// for testing, add an assertions check to make sure all variables remain in range. (Basically implementing a rep invariant checker.)
   	// default testing:
 	display_handler.begin(SSD1306_SWITCHCAPVCC, 0x3C);
@@ -94,6 +97,10 @@ void setup() {
 	digitalWrite(PIN_BLOCKMOTOR_FWD, HIGH);
 	bombEject = false;
 	attachInterrupt(PIN_HALL_SENSOR, interruptBombEjection, FALLING);	// With pullup resistor, Hall sensor goes low when in strong magnetic field
+	
+	// Serial moniter setup for testing
+	Serial3.begin(9600);
+	Serial3.println("Setup done");
 }
 
 void loop() {
