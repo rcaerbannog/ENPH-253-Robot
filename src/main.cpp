@@ -29,10 +29,9 @@ const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA0, PA1, PA2, PA3, PA4, PA5};	
  */
 const double WHEELBASE = 125;	// In mm, Lengthwise distance between front and rear wheel axles
 const double WHEELSEP = 200;	// In mm, Widthwise distance between front wheels
-const double DEFAULT_POWER = 0.20; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 const int MOTOR_PWM_FREQ = 50;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
 const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 us. 
-const int MAX_STEERING_PULSEWIDTH_MICROS = 2000;	// absolute physical limit of left-driving servo rotation to left. Currently limited by chassis.
+const int MAX_STEERING_PULSEWIDTH_MICROS = 1950;	// absolute physical limit of left-driving servo rotation to left. Currently limited by chassis.
 const int MIN_STEERING_PULSEWIDTH_MICROS = 1180;	// absolute physical limit of left-driving servo rotation to right. Currently limited by inversion.
 const int BOMB_EJECTION_TIME_MILLIS = 1000;
 int bombEjectionEndTime = 0;
@@ -113,8 +112,11 @@ void loop() {
 		delay(1000000);
 	}
   	*/
-  	tapeFollowing();
-  	return;
+  	// tapeFollowing();
+  	// return;
+	steeringControlManual(1500);
+	motorControl(0.50, 0.50);
+	delay(1000000);
 }
 
 
@@ -148,6 +150,7 @@ void tapeFollowing() {
 
 	*/
 
+	// REDUCE THIS TO 20 IN TESTING
 	const int LOOP_TIME_MILLIS = 40;	// Control loop period. Must be enough time for the code inside to execute!
 	int nextLoopTime = millis() + LOOP_TIME_MILLIS;
 
@@ -156,12 +159,15 @@ void tapeFollowing() {
 	double prevError = 0;	// from previous control loop, used for derivative control only if prevLeftOnTape and prevRightOnTape.
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
 	const int TAPE_SENSOR_THRESHOLD = 100;	// The analogRead() value above which we consider the tape sensor to be on tape
-	// Make the checkpoint sensors deliberately less sensitive to light -> more sensitive to being off tape?
-	// const int CHECKPOINT_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the checkpoint sensor to be on tape
+
+	const double DEFAULT_POWER = 0.20; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 	const double STEERING_KP = 20.0;	// Steering angle PID proportionality constant
 	const double STEERING_KD = 0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
-	const double MOTORDIF_KP = 20.0;
-	const double MOTORDIF_KD = 0.0;
+	const double MOTORDIF_KP = 0.05;
+	const double MOTORDIF_KD = 0.0;	
+	const double MOTORSCALE_KP = 0.1;	// slows us down if we have consistently high error. (Smoothed by motor inertia)
+	// MOTORSCALE_KP may have to be reduced at lower DEFAULT_POWER and increased at higher DEFAULT_POWER. 
+	// Tune it like any other PID variable if the robot looks unstable / overshoots due to long control system response time.
 
 	// CONTROL LOOP
 	int loopCounter = 0;
@@ -203,9 +209,11 @@ void tapeFollowing() {
 		// Encoder-based speed control can come later
 		errorDerivative = (error - prevError) / LOOP_TIME_MILLIS;
 		steeringAngleDeg = STEERING_KP * error + STEERING_KD * errorDerivative;
-		motorDif = MOTORDIF_KD * error + MOTORDIF_KD * errorDerivative;
+		motorDif = MOTORDIF_KP * error + MOTORDIF_KD * errorDerivative;
 		leftMotorPower = DEFAULT_POWER - motorDif;
 		rightMotorPower = DEFAULT_POWER + motorDif;
+		leftMotorPower *= 1.0 - MOTORSCALE_KP * abs(error);
+		rightMotorPower *= 1.0 - MOTORSCALE_KP * abs(error);
 
 		steeringControl(steeringAngleDeg);
 		motorControl(leftMotorPower, rightMotorPower);
@@ -229,6 +237,7 @@ void tapeFollowing() {
 
 		// COMMENT OUT DEBUG DISPLAY CODE IF THERE IS NO DISPLAY, OTHERWISE EXECUTION WILL STALL
 		// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
+		// The display print together with other code takes about 36ms to print, so control loop time of 40ms (25Hz) is fine.
 		display_handler.clearDisplay();
 		display_handler.setCursor(0, 0);
 		for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%5d", tape_sensor_vals[i]);
@@ -246,8 +255,8 @@ void tapeFollowing() {
 		display_handler.print(" L ");
 		display_handler.println(debugLeftWheelAngle, 1);
 		display_handler.printf("Loop %d\n", loopCounter);
-		display_handler.display();
-		display_handler.printf("Time %d", millis() - (nextLoopTime - 20));
+		// // display_handler.display(); (REMOVED)
+		// // display_handler.printf("Time %d", millis() - (nextLoopTime - LOOP_TIME_MILLIS)); (REMOVED)
 		display_handler.display();
 		
 		if (millis() >= nextLoopTime) {
@@ -312,8 +321,14 @@ void steeringControl(double steeringAngleDeg) {
 	}
 	double turnRadius = WHEELBASE / tan(steeringAngleDeg * PI / 180);	// trigonometry methods are by default in radians, so convert to rad.
 	// For positive steering angle to left, left wheel is inner ( radius - WHEELSEP/2), right wheel is outer (radius + WHEELSEP/2)
-	// double rightWheelAngle = (atan(WHEELBASE / (turnRadius + WHEELSEP/2))) * 180 / PI;	// servo write is in degrees, so convert back to deg	
-	double leftWheelAngle = (atan(WHEELBASE / (turnRadius - WHEELSEP/2))) * 180 / PI;	// servo write is in degrees, so convert back to deg	
+	// double rightWheelAngle = (atan(WHEELBASE / (turnRadius + WHEELSEP/2))) * 180 / PI;	// servo write is in degrees, so convert back to deg
+	double leftWheelAngle;	
+	// Problem if turnRadius > 0 (steeringAngleDeg > 0) but turnRadius - WHEELSEP/2 < 0 (either div0 or leftWheelAngle flips negative)
+	if (turnRadius > 0 && turnRadius <= 1.1 * WHEELSEP / 2) {	
+		leftWheelAngle = 90;
+	} else {
+		leftWheelAngle = (atan(WHEELBASE / (turnRadius - WHEELSEP/2))) * 180 / PI;	// servo write is in degrees, so convert back to deg	
+	}
 	// Servo response is linear with 90 degrees rotation to 1000us pulse width (empirical testing of MG90, MG996R)
 	int pulseWidthMicros = SERVO_NEUTRAL_PULSEWIDTH + (int) ((1000.0/90.0) * leftWheelAngle);
 	pulseWidthMicros = max(MIN_STEERING_PULSEWIDTH_MICROS, min(MAX_STEERING_PULSEWIDTH_MICROS, pulseWidthMicros));	// bounded by empirical physical limits
