@@ -13,8 +13,8 @@
 #define PIN_RMOTOR_REV PA_11	// as PWM output - H-bridge driver
 
 #define PIN_HALL_SENSOR PB5	// as digital input
-#define PIN_BLOCKMOTOR_FWD PB14	// as digital output (non-PWM, so max speed)
-#define PIN_BLOCKMOTOR_REV PB15	// as digital output (non-PWM, so max speed)
+#define PIN_BLOCKMOTOR_IN PB15	// as digital output (non-PWM, so max speed)
+#define PIN_BLOCKMOTOR_OUT PB14	// as digital output (non-PWM, so max speed)
 
 #define PIN_LED_BUILTIN PC13	// DEBUG ONLY: USE TO INDICATE CONTROL LOOP PROGRESSION WITHOUT LCD DISPLAY
 
@@ -29,7 +29,7 @@ const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA0, PA1, PA2, PA3, PA4, PA5};	
  */
 const double WHEELBASE = 125;	// In mm, Lengthwise distance between front and rear wheel axles
 const double WHEELSEP = 200;	// In mm, Widthwise distance between front wheels
-const int MOTOR_PWM_FREQ = 50;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
+const int MOTOR_PWM_FREQ = 100;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
 const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 us. 
 const int MAX_STEERING_PULSEWIDTH_MICROS = 1950;	// absolute physical limit of left-driving servo rotation to left. Currently limited by chassis.
 const int MIN_STEERING_PULSEWIDTH_MICROS = 1180;	// absolute physical limit of left-driving servo rotation to right. Currently limited by inversion.
@@ -81,20 +81,20 @@ void setup() {
 
   	// for testing, add an assertions check to make sure all variables remain in range. (Basically implementing a rep invariant checker.)
   	// default testing:
-	display_handler.begin(SSD1306_SWITCHCAPVCC, 0x3C);
-	display_handler.display();
-	delay(2000);
-	display_handler.clearDisplay();
-	display_handler.setTextSize(1);
-	display_handler.setTextColor(SSD1306_WHITE);
-	writeToDisplay("Either there is no display code after startup, or the program froze before completing a control loop.");
+	// display_handler.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+	// display_handler.display();
+	// delay(2000);
+	// display_handler.clearDisplay();
+	// display_handler.setTextSize(1);
+	// display_handler.setTextColor(SSD1306_WHITE);
+	// writeToDisplay("Either there is no display code after startup, or the program froze before completing a control loop.");
 
 	// set up block collection system. Hall sensor looks Schmitt triggered (switch time ~1us) and sees no bouncing
 	pinMode(PIN_HALL_SENSOR, INPUT);	// using our own resistor instead of Bluepill internal pullup resistor
-	pinMode(PIN_BLOCKMOTOR_FWD, OUTPUT);
-	pinMode(PIN_BLOCKMOTOR_REV, OUTPUT);
-	digitalWrite(PIN_BLOCKMOTOR_REV, LOW);
-	digitalWrite(PIN_BLOCKMOTOR_FWD, HIGH);
+	pinMode(PIN_BLOCKMOTOR_IN, OUTPUT);
+	pinMode(PIN_BLOCKMOTOR_OUT, OUTPUT);
+	digitalWrite(PIN_BLOCKMOTOR_OUT, LOW);
+	digitalWrite(PIN_BLOCKMOTOR_IN, HIGH);
 	bombEject = false;
 	attachInterrupt(PIN_HALL_SENSOR, interruptBombEjection, FALLING);	// With pullup resistor, Hall sensor goes low when in strong magnetic field
 	
@@ -119,17 +119,21 @@ void loop() {
 		delay(1000000);
 	}
   	*/
-  	// tapeFollowing();
+  	tapeFollowing();
   	// return;
-	steeringControlManual(1500);
-	motorControl(0.50, 0.50);
-	delay(1000000);
+	// steeringControlManual(1500);
+	// motorControl(0.50, 0.50);
+	// delay(1000000);
+	// motorControl(1.0, 0);
+	// delay(4000);
+	// motorControl(-1.0, 0);
+	// delay(4000);
 }
 
 
 void interruptBombEjection() {
-	digitalWrite(PIN_BLOCKMOTOR_FWD, LOW);
-	digitalWrite(PIN_BLOCKMOTOR_REV, HIGH);
+	digitalWrite(PIN_BLOCKMOTOR_IN, LOW);
+	digitalWrite(PIN_BLOCKMOTOR_OUT, HIGH);
 	bombEject = true;
 	bombEjectionEndTime = millis() + BOMB_EJECTION_TIME_MILLIS;
 }
@@ -158,7 +162,7 @@ void tapeFollowing() {
 	*/
 
 	// REDUCE THIS TO 20 IN TESTING
-	const int LOOP_TIME_MILLIS = 40;	// Control loop period. Must be enough time for the code inside to execute!
+	const int LOOP_TIME_MILLIS = 20;	// Control loop period. Must be enough time for the code inside to execute!
 	int nextLoopTime = millis() + LOOP_TIME_MILLIS;
 
 	int tape_sensor_vals[NUM_TAPE_SENSORS] = {0, 0, 0, 0, 0, 0};
@@ -167,110 +171,133 @@ void tapeFollowing() {
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
 	const int TAPE_SENSOR_THRESHOLD = 100;	// The analogRead() value above which we consider the tape sensor to be on tape
 
-	const double DEFAULT_POWER = 0.20; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
-	const double STEERING_KP = 20.0;	// Steering angle PID proportionality constant
+	const double DEFAULT_POWER = 0.25; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
+	const double STEERING_KP = 30.0;	// Steering angle PID proportionality constant
 	const double STEERING_KD = 0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
 	const double MOTORDIF_KP = 0.05;
 	const double MOTORDIF_KD = 0.0;	
-	const double MOTORSCALE_KP = 0.1;	// slows us down if we have consistently high error. (Smoothed by motor inertia)
+	const double MOTORDIF_TIME_KP = 0.00;	// increases differential if we are completely off tape for a long time
 	// MOTORSCALE_KP may have to be reduced at lower DEFAULT_POWER and increased at higher DEFAULT_POWER. 
 	// Tune it like any other PID variable if the robot looks unstable / overshoots due to long control system response time.
+	int skipLoop=0;
+	int offTapeLoops=0;
 
 	// CONTROL LOOP
 	int loopCounter = 0;
 	while (true) {
-		digitalWrite(PIN_LED_BUILTIN, HIGH);	// DEBUG ONLY, for monitoring control loop progression without LCD display
-		double error;	// Unitless; Positive error means to right of tape, negative to left; prevError only for debug
-		double errorDerivative;	// prevErrorDerivative only for debug
-		double steeringAngleDeg; // In degrees; Positive angle means steering to left (CCW circling)
-		double motorDif;	// Out of 1.0, power added to right motor vs left
-		double leftMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
-		double rightMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
-
-		bool offTape = true;
-		for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
-			tape_sensor_vals[i] = analogRead(PINS_TAPE_SENSORS[i]);
-			on_tape[i] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
-			if (on_tape[i]) {
-				offTape = false;
+		if (skipLoop==0){
+			digitalWrite(PIN_LED_BUILTIN, HIGH);	// DEBUG ONLY, for monitoring control loop progression without LCD display
+			double error;	// Unitless; Positive error means to right of tape, negative to left; prevError only for debug
+			double errorDerivative;	// prevErrorDerivative only for debug
+			double steeringAngleDeg; // In degrees; Positive angle means steering to left (CCW circling)
+			double motorDif;	// Out of 1.0, power added to right motor vs left
+			double leftMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
+			double rightMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
+			bool offTape = true;
+			for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
+				tape_sensor_vals[i] = analogRead(PINS_TAPE_SENSORS[i]);
+				on_tape[i] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
+				if (on_tape[i]) {
+					offTape = false;
+				}
 			}
-		}
+			
+			if (offTape) {
+				if (prevError >= 0)	{	// relies on prevError not being updated to avoid wiping the check condition
+					error = (NUM_TAPE_SENSORS) / 2.0;
+				}
+				else {	// prevError < 0
+					error = - (NUM_TAPE_SENSORS) / 2.0;
+				}
+				offTapeLoops++;
+				// See if using sign of previous derivative helps here
+				// If we completely skipped over the tape line, then god help us we can't see that
+				// Perhaps do similar open-loop control to checkpoint: keep scanning as often as possible until we return to the tape line
+			} else {
+				offTapeLoops=0;
+				error = errorFunc(tape_sensor_vals, TAPE_SENSOR_THRESHOLD);	// error is calculated here!
 
-		if (offTape) {
-			if (prevError >= 0)	{	// relies on prevError not being updated to avoid wiping the check condition
-				error = (NUM_TAPE_SENSORS) / 2.0;
+				// check if we are on a check point and which one it is
+				
+				bool prevH=0;
+				for (int i = 1; i < NUM_TAPE_SENSORS; i++){
+					if (!on_tape[i]&&on_tape[i-1]){
+						prevH=1;
+					}
+					else if (prevH && on_tape[i]){
+						skipLoop+=2;
+						break;
+					}
+				}
 			}
-			else {	// prevError < 0
-				error = - (NUM_TAPE_SENSORS) / 2.0;
+
+			// Now deciding what to actually do
+			// For now, avoid case-based control
+			// Set neutral motor power to 0.5 and add power (fraction or percentage?) to this
+			// Encoder-based speed control can come later
+			errorDerivative = (error - prevError) / LOOP_TIME_MILLIS;
+			steeringAngleDeg = max(-60.0, min(60.0, STEERING_KP * error + STEERING_KD * errorDerivative));
+			motorDif = MOTORDIF_KP * error + MOTORDIF_KD * errorDerivative + ((error >= 0) ? 1 : -1) * MOTORDIF_TIME_KP * offTapeLoops;
+			leftMotorPower = DEFAULT_POWER - motorDif;
+			rightMotorPower = DEFAULT_POWER + motorDif;
+			// leftMotorPower *= 1.0 - MOTORSCALE_KP * abs(error);
+			// rightMotorPower *= 1.0 - MOTORSCALE_KP * abs(error);
+
+			steeringControl(steeringAngleDeg);
+			motorControl(leftMotorPower, rightMotorPower);
+			
+			prevError = error;
+			prevErrorDerivative = errorDerivative;
+
+			// handle interrupt resolution / tasks
+			// Make a dedicated queue for this later
+			if (bombEject && millis() > bombEjectionEndTime) {
+				if (digitalRead(PIN_HALL_SENSOR) == HIGH) {	// bomb is gone: Hall sensor does not see magnetic field
+					digitalWrite(PIN_BLOCKMOTOR_OUT, LOW);
+					digitalWrite(PIN_BLOCKMOTOR_IN, HIGH);
+					bombEject = false;
+				} else {	// bomb is still there
+					bombEjectionEndTime += 1000;	// check again 1000ms later
+				}
 			}
-			// See if using sign of previous derivative helps here
-			// If we completely skipped over the tape line, then god help us we can't see that
-			// Perhaps do similar open-loop control to checkpoint: keep scanning as often as possible until we return to the tape line
-		} else {
-			error = errorFunc(tape_sensor_vals, TAPE_SENSOR_THRESHOLD);	// error is calculated here!
-		}
 
-		// Now deciding what to actually do
-		// For now, avoid case-based control
-		// Set neutral motor power to 0.5 and add power (fraction or percentage?) to this
-		// Encoder-based speed control can come later
-		errorDerivative = (error - prevError) / LOOP_TIME_MILLIS;
-		steeringAngleDeg = STEERING_KP * error + STEERING_KD * errorDerivative;
-		motorDif = MOTORDIF_KP * error + MOTORDIF_KD * errorDerivative;
-		leftMotorPower = DEFAULT_POWER - motorDif;
-		rightMotorPower = DEFAULT_POWER + motorDif;
-		leftMotorPower *= 1.0 - MOTORSCALE_KP * abs(error);
-		rightMotorPower *= 1.0 - MOTORSCALE_KP * abs(error);
+			digitalWrite(PIN_LED_BUILTIN, LOW);
 
-		steeringControl(steeringAngleDeg);
-		motorControl(leftMotorPower, rightMotorPower);
-		
-		prevError = error;
-		prevErrorDerivative = errorDerivative;
-
-		// handle interrupt resolution / tasks
-		// Make a dedicated queue for this later
-		if (bombEject && millis() > bombEjectionEndTime) {
-			if (digitalRead(PIN_HALL_SENSOR) == HIGH) {	// bomb is gone: Hall sensor does not see magnetic field
-				digitalWrite(PIN_BLOCKMOTOR_REV, LOW);
-				digitalWrite(PIN_BLOCKMOTOR_FWD, HIGH);
-				bombEject = false;
-			} else {	// bomb is still there
-				bombEjectionEndTime += 1000;	// check again 1000ms later
+			// COMMENT OUT DEBUG DISPLAY CODE IF THERE IS NO DISPLAY, OTHERWISE EXECUTION WILL STALL
+			// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
+			// The display print together with other code takes about 36ms to print, so control loop time of 40ms (25Hz) is fine.
+			// display_handler.clearDisplay();
+			// display_handler.setCursor(0, 0);
+			// for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%5d", tape_sensor_vals[i]);
+				// Serial3.println();
+				// Serial3.print(" E ");
+				// Serial3.print(error, 2);
+				// Serial3.print(" dE ");
+				// Serial3.println(errorDerivative, 2);
+				// Serial3.print("LM ");
+				// Serial3.print(leftMotorPower, 3);
+				// Serial3.print(" RM ");
+				// Serial3.println(rightMotorPower, 3);
+				// Serial3.print("Steer ");
+				// Serial3.print(steeringAngleDeg, 1);
+				// Serial3.print(" L ");
+				// Serial3.println(debugLeftWheelAngle, 1);
+				// Serial3.printf("Loop %d\n", loopCounter);
+				// // display_handler.display(); (REMOVED)
+				// Serial3.printf("Time %d", millis() - (nextLoopTime - LOOP_TIME_MILLIS));// (REMOVED)
+			// display_handler.display();
+			
+			
+			if (millis() >= nextLoopTime) {
+				nextLoopTime = millis() + LOOP_TIME_MILLIS;
+			} else {
+				while (millis() < nextLoopTime);	// pause until next scheduled control loop, to ensure consistent loop time synced with servo PWM frequency
+				nextLoopTime += LOOP_TIME_MILLIS;	// may add emergency handling if we have exceeded the previous loop time
 			}
-		}
-
-		digitalWrite(PIN_LED_BUILTIN, LOW);
-
-		// COMMENT OUT DEBUG DISPLAY CODE IF THERE IS NO DISPLAY, OTHERWISE EXECUTION WILL STALL
-		// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
-		// The display print together with other code takes about 36ms to print, so control loop time of 40ms (25Hz) is fine.
-		display_handler.clearDisplay();
-		display_handler.setCursor(0, 0);
-		for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%5d", tape_sensor_vals[i]);
-		display_handler.println();
-		display_handler.print(" E ");
-		display_handler.print(error, 2);
-		display_handler.print(" dE ");
-		display_handler.println(errorDerivative, 2);
-		display_handler.print("LM ");
-		display_handler.print(leftMotorPower, 3);
-		display_handler.print(" RM ");
-		display_handler.println(rightMotorPower, 3);
-		display_handler.print("Steer ");
-		display_handler.print(steeringAngleDeg, 1);
-		display_handler.print(" L ");
-		display_handler.println(debugLeftWheelAngle, 1);
-		display_handler.printf("Loop %d\n", loopCounter);
-		// // display_handler.display(); (REMOVED)
-		// // display_handler.printf("Time %d", millis() - (nextLoopTime - LOOP_TIME_MILLIS)); (REMOVED)
-		display_handler.display();
-		
-		if (millis() >= nextLoopTime) {
-			nextLoopTime = millis() + LOOP_TIME_MILLIS;
-		} else {
-			while (millis() < nextLoopTime);	// pause until next scheduled control loop, to ensure consistent loop time synced with servo PWM frequency
-			nextLoopTime += LOOP_TIME_MILLIS;	// may add emergency handling if we have exceeded the previous loop time
+		}else{
+			steeringControl(0);
+			motorControl(DEFAULT_POWER, DEFAULT_POWER);
+			skipLoop--;
 		}
 		loopCounter++;
 	}
@@ -369,14 +396,14 @@ void steeringControlManual(int pulseWidthMicros) {
  * @param rMotorPower Same for the right motor, truncated to between -1 and 1.
  */
 void motorControl(double lMotorPower, double rMotorPower) {
-	lMotorPower = max(-1.0, min(1.0, lMotorPower));
-	rMotorPower = max(-1.0, min(1.0, rMotorPower));
+	lMotorPower = max(-0.50, min(1.0, lMotorPower));
+	rMotorPower = max(-0.50, min(1.0, rMotorPower));
 	if (lMotorPower > 0) {	// forwards
 		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 		pwm_start(PIN_LMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else if (lMotorPower < 0) {	// reverse
 		pwm_start(PIN_LMOTOR_FWD, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
-		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, (int) (1023 * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
+		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, (int) (1023 * - lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else {	// unpowered / stop
 		pwm_start(PIN_LMOTOR_FWD, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
@@ -387,9 +414,14 @@ void motorControl(double lMotorPower, double rMotorPower) {
 		pwm_start(PIN_RMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * rMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else if (rMotorPower < 0) {	// reverse
 		pwm_start(PIN_RMOTOR_FWD, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
-		pwm_start(PIN_RMOTOR_REV, MOTOR_PWM_FREQ, (int) (1023 * rMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
+		pwm_start(PIN_RMOTOR_REV, MOTOR_PWM_FREQ, (int) (1023 * - rMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
 	} else {	// unpowered / stop
 		pwm_start(PIN_RMOTOR_FWD, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 		pwm_start(PIN_RMOTOR_REV, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 	}
+
+	// Serial3.print("LM ");
+	// Serial3.print(lMotorPower, 3);
+	// Serial3.print(" RM ");
+	// Serial3.println(rMotorPower, 3);
 }
