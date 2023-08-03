@@ -30,6 +30,7 @@ const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA0, PA1, PA2, PA3, PA4, PA5};	
 const double WHEELBASE = 125;	// In mm, Lengthwise distance between front and rear wheel axles
 const double WHEELSEP = 200;	// In mm, Widthwise distance between front wheels
 const int MOTOR_PWM_FREQ = 100;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
+const int SERVO_PWM_FREQ = 100;
 const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 us. 
 const int MAX_STEERING_PULSEWIDTH_MICROS = 1950;	// absolute physical limit of left-driving servo rotation to left. Currently limited by chassis.
 const int MIN_STEERING_PULSEWIDTH_MICROS = 1180;	// absolute physical limit of left-driving servo rotation to right. Currently limited by inversion.
@@ -162,143 +163,138 @@ void tapeFollowing() {
 	*/
 
 	// REDUCE THIS TO 20 IN TESTING
-	const int LOOP_TIME_MILLIS = 20;	// Control loop period. Must be enough time for the code inside to execute!
+	const int LOOP_TIME_MILLIS = 5;	// Control loop period. Must be enough time for the code inside to execute!
 	int nextLoopTime = millis() + LOOP_TIME_MILLIS;
 
 	int tape_sensor_vals[NUM_TAPE_SENSORS] = {0, 0, 0, 0, 0, 0};
 	bool on_tape[NUM_TAPE_SENSORS] = {true, true, true, true};
 	double prevError = 0;	// from previous control loop, used for derivative control only if prevLeftOnTape and prevRightOnTape.
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
-	const int TAPE_SENSOR_THRESHOLD = 100;	// The analogRead() value above which we consider the tape sensor to be on tape
+	const int TAPE_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the tape sensor to be on tape
 
-	const double DEFAULT_POWER = 0.25; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
-	const double STEERING_KP = 30.0;	// Steering angle PID proportionality constant
-	const double STEERING_KD = 0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
+	const double DEFAULT_POWER = 0.22; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
+	const double STEERING_KP = 19.0;	// Steering angle PID proportionality constant
+	const double STEERING_KD = 0.00;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
 	const double MOTORDIF_KP = 0.05;
-	const double MOTORDIF_KD = 0.0;	
-	const double MOTORDIF_TIME_KP = 0.00;	// increases differential if we are completely off tape for a long time
+	const double MOTORDIF_KD = 0;	
+	const double MOTORDIF_TIME_KP = 0.002;	// increases differential if we are completely off tape for a long time
 	// MOTORSCALE_KP may have to be reduced at lower DEFAULT_POWER and increased at higher DEFAULT_POWER. 
 	// Tune it like any other PID variable if the robot looks unstable / overshoots due to long control system response time.
-	int skipLoop=0;
+	bool skipLoop=0;
 	int offTapeLoops=0;
 
 	// CONTROL LOOP
 	int loopCounter = 0;
 	while (true) {
-		if (skipLoop==0){
-			digitalWrite(PIN_LED_BUILTIN, HIGH);	// DEBUG ONLY, for monitoring control loop progression without LCD display
-			double error;	// Unitless; Positive error means to right of tape, negative to left; prevError only for debug
-			double errorDerivative;	// prevErrorDerivative only for debug
-			double steeringAngleDeg; // In degrees; Positive angle means steering to left (CCW circling)
-			double motorDif;	// Out of 1.0, power added to right motor vs left
-			double leftMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
-			double rightMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
-			bool offTape = true;
-			for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
-				tape_sensor_vals[i] = analogRead(PINS_TAPE_SENSORS[i]);
-				on_tape[i] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
-				if (on_tape[i]) {
-					offTape = false;
-				}
+		digitalWrite(PIN_LED_BUILTIN, HIGH);	// DEBUG ONLY, for monitoring control loop progression without LCD display
+		double error;	// Unitless; Positive error means to right of tape, negative to left; prevError only for debug
+		double errorDerivative;	// prevErrorDerivative only for debug
+		double steeringAngleDeg; // In degrees; Positive angle means steering to left (CCW circling)
+		double motorDif;	// Out of 1.0, power added to right motor vs left
+		double leftMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
+		double rightMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
+		bool offTape = true;
+		for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
+			tape_sensor_vals[i] = analogRead(PINS_TAPE_SENSORS[i]);
+			on_tape[i] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
+			if (on_tape[i]) {
+				offTape = false;
 			}
-			
-			if (offTape) {
-				if (prevError >= 0)	{	// relies on prevError not being updated to avoid wiping the check condition
-					error = (NUM_TAPE_SENSORS) / 2.0;
-				}
-				else {	// prevError < 0
-					error = - (NUM_TAPE_SENSORS) / 2.0;
-				}
-				offTapeLoops++;
-				// See if using sign of previous derivative helps here
-				// If we completely skipped over the tape line, then god help us we can't see that
-				// Perhaps do similar open-loop control to checkpoint: keep scanning as often as possible until we return to the tape line
-			} else {
-				offTapeLoops=0;
-				error = errorFunc(tape_sensor_vals, TAPE_SENSOR_THRESHOLD);	// error is calculated here!
-
-				// check if we are on a check point and which one it is
-				
-				bool prevH=0;
-				for (int i = 1; i < NUM_TAPE_SENSORS; i++){
-					if (!on_tape[i]&&on_tape[i-1]){
-						prevH=1;
-					}
-					else if (prevH && on_tape[i]){
-						skipLoop+=2;
-						break;
-					}
-				}
-			}
-
-			// Now deciding what to actually do
-			// For now, avoid case-based control
-			// Set neutral motor power to 0.5 and add power (fraction or percentage?) to this
-			// Encoder-based speed control can come later
-			errorDerivative = (error - prevError) / LOOP_TIME_MILLIS;
-			steeringAngleDeg = max(-60.0, min(60.0, STEERING_KP * error + STEERING_KD * errorDerivative));
-			motorDif = MOTORDIF_KP * error + MOTORDIF_KD * errorDerivative + ((error >= 0) ? 1 : -1) * MOTORDIF_TIME_KP * offTapeLoops;
-			leftMotorPower = DEFAULT_POWER - motorDif;
-			rightMotorPower = DEFAULT_POWER + motorDif;
-			// leftMotorPower *= 1.0 - MOTORSCALE_KP * abs(error);
-			// rightMotorPower *= 1.0 - MOTORSCALE_KP * abs(error);
-
-			steeringControl(steeringAngleDeg);
-			motorControl(leftMotorPower, rightMotorPower);
-			
-			prevError = error;
-			prevErrorDerivative = errorDerivative;
-
-			// handle interrupt resolution / tasks
-			// Make a dedicated queue for this later
-			if (bombEject && millis() > bombEjectionEndTime) {
-				if (digitalRead(PIN_HALL_SENSOR) == HIGH) {	// bomb is gone: Hall sensor does not see magnetic field
-					digitalWrite(PIN_BLOCKMOTOR_OUT, LOW);
-					digitalWrite(PIN_BLOCKMOTOR_IN, HIGH);
-					bombEject = false;
-				} else {	// bomb is still there
-					bombEjectionEndTime += 1000;	// check again 1000ms later
-				}
-			}
-
-			digitalWrite(PIN_LED_BUILTIN, LOW);
-
-			// COMMENT OUT DEBUG DISPLAY CODE IF THERE IS NO DISPLAY, OTHERWISE EXECUTION WILL STALL
-			// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
-			// The display print together with other code takes about 36ms to print, so control loop time of 40ms (25Hz) is fine.
-			// display_handler.clearDisplay();
-			// display_handler.setCursor(0, 0);
-			// for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%5d", tape_sensor_vals[i]);
-				// Serial3.println();
-				// Serial3.print(" E ");
-				// Serial3.print(error, 2);
-				// Serial3.print(" dE ");
-				// Serial3.println(errorDerivative, 2);
-				// Serial3.print("LM ");
-				// Serial3.print(leftMotorPower, 3);
-				// Serial3.print(" RM ");
-				// Serial3.println(rightMotorPower, 3);
-				// Serial3.print("Steer ");
-				// Serial3.print(steeringAngleDeg, 1);
-				// Serial3.print(" L ");
-				// Serial3.println(debugLeftWheelAngle, 1);
-				// Serial3.printf("Loop %d\n", loopCounter);
-				// // display_handler.display(); (REMOVED)
-				// Serial3.printf("Time %d", millis() - (nextLoopTime - LOOP_TIME_MILLIS));// (REMOVED)
-			// display_handler.display();
-			
-			
-			if (millis() >= nextLoopTime) {
-				nextLoopTime = millis() + LOOP_TIME_MILLIS;
-			} else {
-				while (millis() < nextLoopTime);	// pause until next scheduled control loop, to ensure consistent loop time synced with servo PWM frequency
-				nextLoopTime += LOOP_TIME_MILLIS;	// may add emergency handling if we have exceeded the previous loop time
-			}
-		}else{
-			steeringControl(0);
-			motorControl(DEFAULT_POWER, DEFAULT_POWER);
-			skipLoop--;
 		}
+		
+		if (offTape) {
+			if (prevError >= 0)	{	// relies on prevError not being updated to avoid wiping the check condition
+				error = (NUM_TAPE_SENSORS) / 2.0;
+			}
+			else {	// prevError < 0
+				error = - (NUM_TAPE_SENSORS) / 2.0;
+			}
+			offTapeLoops++;
+			// See if using sign of previous derivative helps here
+			// If we completely skipped over the tape line, then god help us we can't see that
+			// Perhaps do similar open-loop control to checkpoint: keep scanning as often as possible until we return to the tape line
+		} else {
+			offTapeLoops=0;
+			error = errorFunc(tape_sensor_vals, TAPE_SENSOR_THRESHOLD);	// error is calculated here!
+
+			// check if we are on a check point and which one it is
+			
+			bool prevH=0;
+			for (int i = 1; i < NUM_TAPE_SENSORS; i++){
+				if (!on_tape[i]&&on_tape[i-1]){
+					prevH=1;
+				}
+				else if (prevH && on_tape[i]){
+					steeringControl(0);
+					motorControl(DEFAULT_POWER, DEFAULT_POWER);
+					continue;
+				}
+			}
+		}
+
+		// Now deciding what to actually do
+		// For now, avoid case-based control
+		// Set neutral motor power to 0.5 and add power (fraction or percentage?) to this
+		// Encoder-based speed control can come later
+		errorDerivative = (error - prevError) / LOOP_TIME_MILLIS;
+		steeringAngleDeg = max(-60.0, min(60.0, STEERING_KP * error + STEERING_KD * errorDerivative));
+		motorDif = MOTORDIF_KP * error + MOTORDIF_KD * errorDerivative + ((error >= 0) ? 1 : -1) * MOTORDIF_TIME_KP * offTapeLoops;
+		leftMotorPower = DEFAULT_POWER - motorDif;
+		rightMotorPower = DEFAULT_POWER + motorDif;
+		// leftMotorPower *= 1.0 - MOTORSCALE_KP * abs(error);
+		// rightMotorPower *= 1.0 - MOTORSCALE_KP * abs(error);
+
+		steeringControl(steeringAngleDeg);
+		motorControl(leftMotorPower, rightMotorPower);
+		
+		prevError = error;
+		prevErrorDerivative = errorDerivative;
+
+		// handle interrupt resolution / tasks
+		// Make a dedicated queue for this later
+		if (bombEject && millis() > bombEjectionEndTime) {
+			if (digitalRead(PIN_HALL_SENSOR) == HIGH) {	// bomb is gone: Hall sensor does not see magnetic field
+				digitalWrite(PIN_BLOCKMOTOR_OUT, LOW);
+				digitalWrite(PIN_BLOCKMOTOR_IN, HIGH);
+				bombEject = false;
+			} else {	// bomb is still there
+				bombEjectionEndTime += 1000;	// check again 1000ms later
+			}
+		}
+
+		digitalWrite(PIN_LED_BUILTIN, LOW);
+
+		// COMMENT OUT DEBUG DISPLAY CODE IF THERE IS NO DISPLAY, OTHERWISE EXECUTION WILL STALL
+		// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
+		// The display print together with other code takes about 36ms to print, so control loop time of 40ms (25Hz) is fine.
+		// display_handler.clearDisplay();
+		// display_handler.setCursor(0, 0);
+		// for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%5d", tape_sensor_vals[i]);
+		// Serial3.println();
+		// Serial3.print(" E ");
+		// Serial3.print(error, 2);
+		// Serial3.print(" dE ");
+		// Serial3.println(errorDerivative, 2);
+		// Serial3.print("LM ");
+		// Serial3.print(leftMotorPower, 3);
+		// Serial3.print(" RM ");
+		// Serial3.println(rightMotorPower, 3);
+		// Serial3.print("Steer ");
+		// Serial3.print(steeringAngleDeg, 1);
+		// Serial3.print(" L ");
+		// Serial3.println(debugLeftWheelAngle, 1);
+		// Serial3.printf("Loop %d\n", loopCounter);
+		// // display_handler.display(); (REMOVED)
+		// Serial3.printf("Time %d", millis() - (nextLoopTime - LOOP_TIME_MILLIS));// (REMOVED)
+		// display_handler.display();
+		
+		
+		// if (millis() >= nextLoopTime) {
+		// 	nextLoopTime = millis() + LOOP_TIME_MILLIS;
+		// } else {
+		// 	while (millis() < nextLoopTime);	// pause until next scheduled control loop, to ensure consistent loop time synced with servo PWM frequency
+		// 	nextLoopTime += LOOP_TIME_MILLIS;	// may add emergency handling if we have exceeded the previous loop time
+		// }
 		loopCounter++;
 	}
 	// right now, the control loop should never end. If we get here there's been an error.
@@ -351,7 +347,7 @@ double errorFunc(int tape_sensor_vals[], int TAPE_SENSOR_THRESHOLD) {
 */
 void steeringControl(double steeringAngleDeg) {
 	if (abs(steeringAngleDeg) < 1.0) {
-		pwm_start(PIN_STEERING_SERVO, 50, SERVO_NEUTRAL_PULSEWIDTH, TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
+		pwm_start(PIN_STEERING_SERVO, SERVO_PWM_FREQ, SERVO_NEUTRAL_PULSEWIDTH, TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
 	}
 	double turnRadius = WHEELBASE / tan(steeringAngleDeg * PI / 180);	// trigonometry methods are by default in radians, so convert to rad.
 	// For positive steering angle to left, left wheel is inner ( radius - WHEELSEP/2), right wheel is outer (radius + WHEELSEP/2)
@@ -366,7 +362,7 @@ void steeringControl(double steeringAngleDeg) {
 	// Servo response is linear with 90 degrees rotation to 1000us pulse width (empirical testing of MG90, MG996R)
 	int pulseWidthMicros = SERVO_NEUTRAL_PULSEWIDTH + (int) ((1000.0/90.0) * leftWheelAngle);
 	pulseWidthMicros = max(MIN_STEERING_PULSEWIDTH_MICROS, min(MAX_STEERING_PULSEWIDTH_MICROS, pulseWidthMicros));	// bounded by empirical physical limits
-	pwm_start(PIN_STEERING_SERVO, 50, pulseWidthMicros, TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
+	pwm_start(PIN_STEERING_SERVO, SERVO_PWM_FREQ, pulseWidthMicros, TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
 
 	debugLeftWheelAngle = leftWheelAngle;
 }
@@ -376,7 +372,7 @@ void steeringControl(double steeringAngleDeg) {
 */
 void steeringControlManual(int pulseWidthMicros) {
 	// Servo response is linear with 90 degrees rotation to 1000us pulse width (empirical testing of MG90, MG996R)
-	pwm_start(PIN_STEERING_SERVO, 50, pulseWidthMicros, TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
+	pwm_start(PIN_STEERING_SERVO, SERVO_PWM_FREQ, pulseWidthMicros, TimerCompareFormat_t::MICROSEC_COMPARE_FORMAT);
 
 	debugLeftWheelAngle = (pulseWidthMicros - SERVO_NEUTRAL_PULSEWIDTH) * (90.0/1000.0);
 }
