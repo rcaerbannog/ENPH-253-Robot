@@ -109,7 +109,7 @@ void setup() {
 	// writeToDisplay("Either there is no display code after startup, or the program froze before completing a control loop.");
 
 	// set up block collection system. Hall sensor looks Schmitt triggered (switch time ~1us) and sees no bouncing
-	pinMode(PIN_HALL_SENSOR, INPUT);	// using our own resistor instead of Bluepill internal pullup resistor
+	pinMode(PIN_HALL_SENSOR, INPUT_PULLUP);	// using our own resistor instead of Bluepill internal pullup resistor
 	pinMode(PIN_BLOCKMOTOR_IN, OUTPUT);
 	pinMode(PIN_BLOCKMOTOR_OUT, OUTPUT);
 	digitalWrite(PIN_BLOCKMOTOR_OUT, LOW);
