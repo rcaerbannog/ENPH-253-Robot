@@ -124,7 +124,7 @@ void setup() {
 	// writeToDisplay("Either there is no display code after startup, or the program froze before completing a control loop.");
 
 	// set up block collection system. Hall sensor looks Schmitt triggered (switch time ~1us) and sees no bouncing
-	pinMode(PIN_HALL_SENSOR, INPUT);	// using our own resistor instead of Bluepill internal pullup resistor
+	pinMode(PIN_HALL_SENSOR, INPUT_PULLUP);	// using our own resistor instead of Bluepill internal pullup resistor
 	pinMode(PIN_BLOCKMOTOR_IN, OUTPUT);
 	pinMode(PIN_BLOCKMOTOR_OUT, OUTPUT);
 	digitalWrite(PIN_BLOCKMOTOR_OUT, LOW);
@@ -151,14 +151,12 @@ void loop() {
 
   	tapeFollowing();
   	return;
-
-	// steeringControlManual(1500);
+	
 	// motorControl(0.50, 0.50);
-	// delay(1000000);
-	// motorControl(1.0, 0);
-	// delay(4000);
-	// motorControl(-1.0, 0);
-	// delay(4000);
+	// steeringControlManual(1800);
+	// delay(1000);
+	// steeringControlManual(1200);
+	// delay(1000);
 }
 
 
@@ -232,8 +230,7 @@ void tapeFollowing() {
 		double leftMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
 		double rightMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
 		bool offTape = true;
-		bool onCheckpoint = true;
-
+		bool onCheckpoint = false;
 		for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
 			tape_sensor_vals[i] = analogRead(PINS_TAPE_SENSORS[i]);
 			on_tape[i] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
