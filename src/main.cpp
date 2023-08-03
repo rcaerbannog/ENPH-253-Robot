@@ -194,6 +194,7 @@ void tapeFollowing() {
 		double leftMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
 		double rightMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
 		bool offTape = true;
+		bool onCheckpoint = true;
 		for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
 			tape_sensor_vals[i] = analogRead(PINS_TAPE_SENSORS[i]);
 			on_tape[i] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
@@ -215,40 +216,43 @@ void tapeFollowing() {
 			// Perhaps do similar open-loop control to checkpoint: keep scanning as often as possible until we return to the tape line
 		} else {
 			offTapeLoops=0;
-			error = errorFunc(tape_sensor_vals, TAPE_SENSOR_THRESHOLD);	// error is calculated here!
-
+			error = errorFunc(tape_sensor_vals, TAPE_SENSOR_THRESHOLD);
 			// check if we are on a check point and which one it is
-			
 			bool prevH=0;
 			for (int i = 1; i < NUM_TAPE_SENSORS; i++){
 				if (!on_tape[i]&&on_tape[i-1]){
 					prevH=1;
 				}
 				else if (prevH && on_tape[i]){
-					steeringControl(0);
-					motorControl(DEFAULT_POWER, DEFAULT_POWER);
-					continue;
+					onCheckpoint = true;
+					break;
 				}
 			}
 		}
 
-		// Now deciding what to actually do
-		// For now, avoid case-based control
-		// Set neutral motor power to 0.5 and add power (fraction or percentage?) to this
-		// Encoder-based speed control can come later
-		errorDerivative = (error - prevError) / LOOP_TIME_MILLIS;
-		steeringAngleDeg = max(-60.0, min(60.0, STEERING_KP * error + STEERING_KD * errorDerivative));
-		motorDif = MOTORDIF_KP * error + MOTORDIF_KD * errorDerivative + ((error >= 0) ? 1 : -1) * MOTORDIF_TIME_KP * offTapeLoops;
-		leftMotorPower = DEFAULT_POWER - motorDif;
-		rightMotorPower = DEFAULT_POWER + motorDif;
-		// leftMotorPower *= 1.0 - MOTORSCALE_KP * abs(error);
-		// rightMotorPower *= 1.0 - MOTORSCALE_KP * abs(error);
+		if (onCheckpoint) {
+			steeringControl(0);
+			motorControl(DEFAULT_POWER, DEFAULT_POWER);
+			continue;
+		} else {
+			// Now deciding what to actually do
+			// For now, avoid case-based control
+			// Set neutral motor power to 0.5 and add power (fraction or percentage?) to this
+			// Encoder-based speed control can come later
+			errorDerivative = (error - prevError) / LOOP_TIME_MILLIS;
+			steeringAngleDeg = max(-60.0, min(60.0, STEERING_KP * error + STEERING_KD * errorDerivative));
+			motorDif = MOTORDIF_KP * error + MOTORDIF_KD * errorDerivative + ((error >= 0) ? 1 : -1) * MOTORDIF_TIME_KP * offTapeLoops;
+			leftMotorPower = DEFAULT_POWER - motorDif;
+			rightMotorPower = DEFAULT_POWER + motorDif;
+			// leftMotorPower *= 1.0 - MOTORSCALE_KP * abs(error);
+			// rightMotorPower *= 1.0 - MOTORSCALE_KP * abs(error);
 
-		steeringControl(steeringAngleDeg);
-		motorControl(leftMotorPower, rightMotorPower);
-		
-		prevError = error;
-		prevErrorDerivative = errorDerivative;
+			steeringControl(steeringAngleDeg);
+			motorControl(leftMotorPower, rightMotorPower);
+			
+			prevError = error;
+			prevErrorDerivative = errorDerivative;
+		}
 
 		// handle interrupt resolution / tasks
 		// Make a dedicated queue for this later
