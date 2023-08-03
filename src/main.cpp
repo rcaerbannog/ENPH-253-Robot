@@ -18,6 +18,9 @@
 
 #define PIN_LED_BUILTIN PC13	// DEBUG ONLY: USE TO INDICATE CONTROL LOOP PROGRESSION WITHOUT LCD DISPLAY
 
+#define PIN_UDS_FRONT_ECHO PB0	// as digital output
+#define PIN_UDS_FRONT_TRIGGER PB1	// as digital input
+
 //#define PIN_CHECKPOINT_SENSOR_LEFT PA1	// as analog input
 //#define PIN_CHECKPOINT_SENSOR_RIGHT PA0	// as analog input
 #define PIN_STEERING_SERVO PA_6	// as PWM output - servo control
@@ -38,6 +41,12 @@ const int BOMB_EJECTION_TIME_MILLIS = 1000;
 int bombEjectionEndTime = 0;
 bool bombEject = false;
 
+// DISTANCE SENSOR
+uint32_t udsLastPulseMicros = 0, udsEchoStartMicros = 0, udsEchoEndMicros = 0;
+bool udsPulse = false;
+bool pulseReceived = false;
+double lastDistCm = 0;
+
 /*
 Note: Motor PWM frequency cannot be too high, else gate driver turn-on time 
 (~400us, inverted exponential decay voltage increase from high capacitance) significantly reduces motor power.
@@ -57,14 +66,18 @@ double debugLeftWheelAngle = 0;
 // put function declarations here:
 void interruptBombEjection();
 void writeToDisplay(const char *str);
+void pollDistanceSensor();
+void pollHallSensor();
 double errorFunc(int tape_sensor_vals[], int TAPE_SENSOR_THRESHOLD);
 void tapeFollowing();
 void steeringControl(double steeringAngleDeg);
 void steeringControlManual(int pulseWidthMicros);
 void motorControl(double lMotorPower, double rMotorPower);
+void uds_irq();
 
 //Define serial pins
 HardwareSerial Serial3(PB11, PB10);
+
 
 void setup() {
 	pinMode(PIN_LMOTOR_FWD, OUTPUT);
@@ -77,6 +90,11 @@ void setup() {
 	//pinMode(PIN_CHECKPOINT_SENSOR_LEFT, INPUT);
 	//pinMode(PIN_CHECKPOINT_SENSOR_RIGHT, INPUT);
 	pinMode(PIN_STEERING_SERVO, OUTPUT);
+
+	pinMode(PIN_UDS_FRONT_ECHO, INPUT);
+	pinMode(PIN_UDS_FRONT_TRIGGER, OUTPUT);
+	attachInterrupt(PIN_UDS_FRONT_ECHO, uds_irq, CHANGE);
+
 
 	pinMode(PIN_LED_BUILTIN, OUTPUT);
 
@@ -102,26 +120,13 @@ void setup() {
 	// Serial moniter setup for testing
 	Serial3.begin(9600);
 	Serial3.println("Setup done");
+
+	// If needed, insert hardcoding for start and first turn here.
 }
 
 void loop() {
-	/*
-	try {
-		tapeFollowing();
-	} 
-	catch(char *msg) {
-		motorControl(0.0, 0.0);
-		writeToDisplay(msg);
-		delay(1000000);
-	}
-	catch(...) {
-		motorControl(0.0, 0.0);
-		writeToDisplay("Uncaught exception???");
-		delay(1000000);
-	}
-  	*/
   	tapeFollowing();
-  	// return;
+  	return;
 	// steeringControlManual(1500);
 	// motorControl(0.50, 0.50);
 	// delay(1000000);
@@ -244,8 +249,6 @@ void tapeFollowing() {
 			motorDif = MOTORDIF_KP * error + MOTORDIF_KD * errorDerivative + ((error >= 0) ? 1 : -1) * MOTORDIF_TIME_KP * offTapeLoops;
 			leftMotorPower = DEFAULT_POWER - motorDif;
 			rightMotorPower = DEFAULT_POWER + motorDif;
-			// leftMotorPower *= 1.0 - MOTORSCALE_KP * abs(error);
-			// rightMotorPower *= 1.0 - MOTORSCALE_KP * abs(error);
 
 			steeringControl(steeringAngleDeg);
 			motorControl(leftMotorPower, rightMotorPower);
@@ -256,15 +259,8 @@ void tapeFollowing() {
 
 		// handle interrupt resolution / tasks
 		// Make a dedicated queue for this later
-		if (bombEject && millis() > bombEjectionEndTime) {
-			if (digitalRead(PIN_HALL_SENSOR) == HIGH) {	// bomb is gone: Hall sensor does not see magnetic field
-				digitalWrite(PIN_BLOCKMOTOR_OUT, LOW);
-				digitalWrite(PIN_BLOCKMOTOR_IN, HIGH);
-				bombEject = false;
-			} else {	// bomb is still there
-				bombEjectionEndTime += 1000;	// check again 1000ms later
-			}
-		}
+		// pollDistanceSensor();
+		pollHallSensor();
 
 		digitalWrite(PIN_LED_BUILTIN, LOW);
 
@@ -316,6 +312,31 @@ void writeToDisplay(const char *str) {
 	display_handler.setCursor(0, 0);
 	display_handler.println(str);
 	display_handler.display();
+}
+
+void pollDistanceSensor() {
+	if (micros() - udsLastPulseMicros > 60000) {	// only activate UDS when guaranteed that the previous pulse has either been returned or dissipated
+		pulseReceived = false;
+		digitalWrite(PIN_UDS_FRONT_TRIGGER, LOW);
+		delayMicroseconds(2);
+		// Sets the trigPin on HIGH state for 10 micro seconds
+		digitalWrite(PIN_UDS_FRONT_TRIGGER, HIGH);
+		delayMicroseconds(10);
+		digitalWrite(PIN_UDS_FRONT_TRIGGER, LOW);
+		udsLastPulseMicros = micros();
+	}
+}
+
+void pollHallSensor() {
+	if (bombEject && millis() > bombEjectionEndTime) {
+		if (digitalRead(PIN_HALL_SENSOR) == HIGH) {	// bomb is gone: Hall sensor does not see magnetic field
+			digitalWrite(PIN_BLOCKMOTOR_OUT, LOW);
+			digitalWrite(PIN_BLOCKMOTOR_IN, HIGH);
+			bombEject = false;
+		} else {	// bomb is still there
+			bombEjectionEndTime += 1000;	// check again 1000ms later
+		}
+	}
 }
 
 /*
@@ -424,4 +445,20 @@ void motorControl(double lMotorPower, double rMotorPower) {
 	// Serial3.print(lMotorPower, 3);
 	// Serial3.print(" RM ");
 	// Serial3.println(rMotorPower, 3);
+}
+
+void uds_irq() {
+  if (udsPulse) {
+    udsEchoEndMicros = micros();
+    udsPulse = false;
+    lastDistCm = (udsEchoEndMicros - udsEchoStartMicros) / 58.0;
+    if (udsEchoStartMicros - udsLastPulseMicros < 30000) {
+      pulseReceived = true;
+    } else {
+      lastDistCm = 0;
+    }
+  } else {
+    udsEchoStartMicros = micros();
+    udsPulse = true;
+  }
 }
