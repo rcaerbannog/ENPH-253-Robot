@@ -12,6 +12,9 @@
 #define PIN_RMOTOR_FWD PA_10	// as PWM output - H-bridge driver
 #define PIN_RMOTOR_REV PA_11	// as PWM output - H-bridge driver
 
+#define PIN_LMOTOR_ENCODER PB3
+#define PIN_RMOTOR_ENCODER PB4
+
 #define PIN_HALL_SENSOR PB5	// as digital input
 #define PIN_BLOCKMOTOR_IN PB15	// as digital output (non-PWM, so max speed)
 #define PIN_BLOCKMOTOR_OUT PB14	// as digital output (non-PWM, so max speed)
@@ -37,6 +40,11 @@ const int SERVO_PWM_FREQ = 100;
 const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 us. 
 const int MAX_STEERING_PULSEWIDTH_MICROS = 1950;	// absolute physical limit of left-driving servo rotation to left. Currently limited by chassis.
 const int MIN_STEERING_PULSEWIDTH_MICROS = 1180;	// absolute physical limit of left-driving servo rotation to right. Currently limited by inversion.
+
+// SPEED CONTROL
+int lMotorPulses = 0, rMotorPulses = 0;
+uint32_t lastSpeedMeasurement = 0;
+
 const int BOMB_EJECTION_TIME_MILLIS = 1000;
 int bombEjectionEndTime = 0;
 bool bombEject = false;
@@ -64,6 +72,8 @@ double debugLeftWheelAngle = 0;
 
 
 // put function declarations here:
+void lMotor_encoder_irq();
+void rMotor_encoder_irq();
 void interruptBombEjection();
 void writeToDisplay(const char *str);
 void pollDistanceSensor();
@@ -94,6 +104,11 @@ void setup() {
 	pinMode(PIN_UDS_FRONT_ECHO, INPUT);
 	pinMode(PIN_UDS_FRONT_TRIGGER, OUTPUT);
 	attachInterrupt(PIN_UDS_FRONT_ECHO, uds_irq, CHANGE);
+
+	pinMode(PIN_LMOTOR_ENCODER, INPUT);
+	pinMode(PIN_RMOTOR_ENCODER, INPUT);
+	attachInterrupt(PIN_LMOTOR_ENCODER, lMotor_encoder_irq, RISING);
+	attachInterrupt(PIN_RMOTOR_ENCODER, rMotor_encoder_irq, RISING);
 
 
 	pinMode(PIN_LED_BUILTIN, OUTPUT);
@@ -136,7 +151,7 @@ void loop() {
 
   	tapeFollowing();
   	return;
-	
+
 	// steeringControlManual(1500);
 	// motorControl(0.50, 0.50);
 	// delay(1000000);
@@ -152,6 +167,14 @@ void interruptBombEjection() {
 	digitalWrite(PIN_BLOCKMOTOR_OUT, HIGH);
 	bombEject = true;
 	bombEjectionEndTime = millis() + BOMB_EJECTION_TIME_MILLIS;
+}
+
+void lMotor_encoder_irq() {
+	lMotorPulses++;
+}
+
+void rMotor_encoder_irq() {
+	rMotorPulses++;
 }
 
 /*
@@ -177,7 +200,7 @@ void tapeFollowing() {
 
 	*/
 
-	// REDUCE THIS TO 20 IN TESTING
+	// REDUCE THIS TO 10ms IN TESTING, OR get rid of fixed loop time and loop as fast as possible. Digital servo can handle this.
 	const int LOOP_TIME_MILLIS = 5;	// Control loop period. Must be enough time for the code inside to execute!
 	int nextLoopTime = millis() + LOOP_TIME_MILLIS;
 
@@ -210,6 +233,7 @@ void tapeFollowing() {
 		double rightMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
 		bool offTape = true;
 		bool onCheckpoint = true;
+
 		for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
 			tape_sensor_vals[i] = analogRead(PINS_TAPE_SENSORS[i]);
 			on_tape[i] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
@@ -310,6 +334,38 @@ void tapeFollowing() {
 	// right now, the control loop should never end. If we get here there's been an error.
 	motorControl(0.0, 0.0);
 	delay(10000000);
+}
+
+void speedControl(double lMotorSpeed, double rMotorSpeed) {
+	// Take speed measurements
+	double currentTime = micros();
+	double lMotorSpeedMeasured = lMotorPulses / (currentTime - lastSpeedMeasurement);
+	double rMotorSpeedMeasured = rMotorPulses / (currentTime - lastSpeedMeasurement);
+	lMotorPulses = 0;
+	rMotorPulses = 0;
+	lastSpeedMeasurement = micros();
+
+	if (lMotorSpeed > 0) {
+		digitalWrite(PIN_LMOTOR_REV, LOW);
+		digitalWrite(PIN_LMOTOR_FWD, (lMotorSpeed > lMotorSpeedMeasured));
+	} else if (lMotorSpeed < 0) {
+		digitalWrite(PIN_LMOTOR_FWD, LOW);
+		digitalWrite(PIN_LMOTOR_REV, (lMotorSpeed < lMotorSpeedMeasured));
+	} else {
+		digitalWrite(PIN_LMOTOR_FWD, LOW);
+		digitalWrite(PIN_LMOTOR_REV, LOW);
+	}
+
+	if (rMotorSpeed > 0) {
+		digitalWrite(PIN_RMOTOR_REV, LOW);
+		digitalWrite(PIN_RMOTOR_FWD, (rMotorSpeed > rMotorSpeedMeasured));
+	} else if (rMotorSpeed < 0) {
+		digitalWrite(PIN_RMOTOR_FWD, LOW);
+		digitalWrite(PIN_RMOTOR_REV, (rMotorSpeed < rMotorSpeedMeasured));
+	} else {
+		digitalWrite(PIN_RMOTOR_FWD, LOW);
+		digitalWrite(PIN_RMOTOR_REV, LOW);
+	}
 }
 
 
