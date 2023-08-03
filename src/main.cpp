@@ -125,8 +125,18 @@ void setup() {
 }
 
 void loop() {
+	// pollDistanceSensor();
+	// display_handler.clearDisplay();
+  	// display_handler.setCursor(0, 0);
+	// display_handler.print("Pulse micros: ");
+	// display_handler.println(udsEchoEndMicros);
+	// display_handler.print("Distance: ");
+	// display_handler.println(lastDistCm);
+	// display_handler.display();
+
   	tapeFollowing();
   	return;
+	
 	// steeringControlManual(1500);
 	// motorControl(0.50, 0.50);
 	// delay(1000000);
