@@ -185,9 +185,9 @@ void tapeFollowing() {
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
 	const int TAPE_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the tape sensor to be on tape
 
-	const double DEFAULT_POWER = 0.22; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
+	const double DEFAULT_POWER = 0.3; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 	const double STEERING_KP = 19.0;	// Steering angle PID proportionality constant
-	const double STEERING_KD = 0.00;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
+	const double STEERING_KD = 0.01;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
 	const double MOTORDIF_KP = 0.05;
 	const double MOTORDIF_KD = 0;	
 	const double MOTORDIF_TIME_KP = 0.002;	// increases differential if we are completely off tape for a long time
