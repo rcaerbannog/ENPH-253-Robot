@@ -200,6 +200,7 @@ void tapeFollowing() {
 	// REDUCE THIS TO 20 IN TESTING
 	const int LOOP_TIME_MILLIS = 5;	// Control loop period. Must be enough time for the code inside to execute!
 	int nextLoopTime = millis() + LOOP_TIME_MILLIS;
+	uint32_t lastLoopTimeMillis = millis();
 
 	int tape_sensor_vals[NUM_TAPE_SENSORS] = {0, 0, 0, 0, 0, 0};
 	bool on_tape[NUM_TAPE_SENSORS] = {true, true, true, true};
@@ -211,7 +212,7 @@ void tapeFollowing() {
 	const double SLOW_DEFAULT_POWER = 0.22;	// The above, but when we want to go slow (e.g. off tape or re-entering)
 	const double STEERING_KP = 19.0;	// Steering angle PID proportionality constant
 	const double STEERING_KD = 0.01;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
-	const double MOTORDIF_KP = 0.05;
+	const double MOTORDIF_KP = 0.00;
 	const double MOTORDIF_KD = 0;	
 	const double MOTORDIF_TIME_KP = 0;	// increases differential if we are completely off tape for a long time
 	// MOTORSCALE_KP may have to be reduced at lower DEFAULT_POWER and increased at higher DEFAULT_POWER. 
@@ -253,7 +254,7 @@ void tapeFollowing() {
 			}
 		}
 		
-		uint32_t currentTime = millis();
+		uint32_t currentTimeMillis = millis();
 		if (offTape) {
 			if (prevError >= 0)	{	// relies on prevError not being updated to avoid wiping the check condition
 				error = (NUM_TAPE_SENSORS) / 2.0;
@@ -264,8 +265,8 @@ void tapeFollowing() {
 
 			if (brakeState == 0) {
 				brakeState = 1;
-				brake12TimeMillis = currentTime + 500;	// or however many milliseconds you want
-			} else if (brakeState == 1 && currentTime > brake12TimeMillis) {
+				brake12TimeMillis = currentTimeMillis + 500;	// or however many milliseconds you want
+			} else if (brakeState == 1 && currentTimeMillis > brake12TimeMillis) {
 				brakeState = 2;
 			}
 			offTapeLoops++;
@@ -275,8 +276,8 @@ void tapeFollowing() {
 		} else {
 			if ((brakeState == 1 || brakeState == 2)) {	// we were previously off tape
 				brakeState = 3;
-				brake30TimeMillis = currentTime + 500;	// or however many milliseconds you want
-			} else if (brakeState == 3 && currentTime > brake30TimeMillis) {
+				brake30TimeMillis = currentTimeMillis + 500;	// or however many milliseconds you want
+			} else if (brakeState == 3 && currentTimeMillis > brake30TimeMillis) {
 				brakeState = 0;
 			}
 			offTapeLoops=0;
@@ -303,7 +304,7 @@ void tapeFollowing() {
 			// For now, avoid case-based control
 			// Set neutral motor power to 0.5 and add power (fraction or percentage?) to this
 			// Encoder-based speed control can come later
-			errorDerivative = (error - prevError) / LOOP_TIME_MILLIS;
+			errorDerivative = (currentTimeMillis > lastLoopTimeMillis) ? (error - prevError) / (currentTimeMillis - lastLoopTimeMillis) : 0;
 			steeringAngleDeg = max(-60.0, min(60.0, STEERING_KP * error + STEERING_KD * errorDerivative));
 			steeringControl(steeringAngleDeg);
 
@@ -322,6 +323,7 @@ void tapeFollowing() {
 			
 			prevError = error;
 			prevErrorDerivative = errorDerivative;
+			lastLoopTimeMillis = currentTimeMillis;
 		}
 
 		digitalWrite(PIN_LED_BUILTIN, LOW);
