@@ -210,8 +210,8 @@ void tapeFollowing() {
 	const double DEFAULT_POWER = 0.30; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 	const double SLOW_DEFAULT_POWER = 0.22;	// The above, but when we want to go slow (e.g. off tape or re-entering)
 	const double STEERING_KP = 19.0;	// Steering angle PID proportionality constant
-	const double STEERING_KD = 0.00;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
-	const double MOTORDIF_KP = 0;
+	const double STEERING_KD = 0.01;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
+	const double MOTORDIF_KP = 0.05;
 	const double MOTORDIF_KD = 0;	
 	const double MOTORDIF_TIME_KP = 0;	// increases differential if we are completely off tape for a long time
 	// MOTORSCALE_KP may have to be reduced at lower DEFAULT_POWER and increased at higher DEFAULT_POWER. 
