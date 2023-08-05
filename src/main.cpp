@@ -261,6 +261,7 @@ void tapeFollowing() {
 		double leftMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
 		double rightMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
 
+		uint32_t currentTimeMillis = millis();	//TODO: move this back after the collision avoidance check
 		// handle interrupt resolution / tasks
 		// Make a dedicated queue for this later
 		pollDistanceSensor();
@@ -271,7 +272,6 @@ void tapeFollowing() {
 			collisionAvoidanceOffTape();
 		}
 		
-		uint32_t currentTimeMillis = millis();
 		if (offTape) {
 			if (prevError >= 0)	{	// relies on prevError not being updated to avoid wiping the check condition
 				error = (NUM_TAPE_SENSORS) / 2.0;
@@ -344,26 +344,27 @@ void tapeFollowing() {
 		// COMMENT OUT DEBUG DISPLAY CODE IF THERE IS NO DISPLAY, OTHERWISE EXECUTION WILL STALL
 		// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
 		// The display print together with other code takes about 36ms to print, so control loop time of 40ms (25Hz) is fine.
-		// display_handler.clearDisplay();
-		// display_handler.setCursor(0, 0);
-		// for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%5d", tape_sensor_vals[i]);
-		// Serial3.println();
-		// Serial3.print(" E ");
-		// Serial3.print(error, 2);
-		// Serial3.print(" dE ");
-		// Serial3.println(errorDerivative, 2);
-		// Serial3.print("LM ");
-		// Serial3.print(leftMotorPower, 3);
-		// Serial3.print(" RM ");
-		// Serial3.println(rightMotorPower, 3);
-		// Serial3.print("Steer ");
-		// Serial3.print(steeringAngleDeg, 1);
-		// Serial3.print(" L ");
-		// Serial3.println(debugLeftWheelAngle, 1);
-		// Serial3.printf("Loop %d\n", loopCounter);
-		// // display_handler.display(); (REMOVED)
-		// Serial3.printf("Time %d", millis() - (nextLoopTime - LOOP_TIME_MILLIS));// (REMOVED)
-		// display_handler.display();
+		display_handler.clearDisplay();
+		display_handler.setCursor(0, 0);
+		display_handler.printf("Loop %d Time %d\n", loopCounter, millis() - currentTimeMillis);
+		// display_handler.printf("Loop %d Time %d", loopCounter, millis() - (nextLoopTime - LOOP_TIME_MILLIS));
+		for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%5d", tape_sensor_vals[i]);
+		display_handler.println();
+		display_handler.print(" E ");
+		display_handler.print(error, 2);
+		display_handler.print(" dE ");
+		display_handler.println(errorDerivative, 2);
+		display_handler.print("LM ");
+		display_handler.print(leftMotorPower, 3);
+		display_handler.print(" RM ");
+		display_handler.println(rightMotorPower, 3);
+		display_handler.print("Steer ");
+		display_handler.print(steeringAngleDeg, 1);
+		display_handler.print(" L ");
+		display_handler.println(debugLeftWheelAngle, 1);
+		display_handler.print("UDS cm: ");
+		display_handler.print(lastDistCm);
+		display_handler.display();
 		
 		
 		// if (millis() >= nextLoopTime) {
@@ -527,11 +528,6 @@ void motorControl(double lMotorPower, double rMotorPower) {
 		pwm_start(PIN_RMOTOR_FWD, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 		pwm_start(PIN_RMOTOR_REV, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 	}
-
-	// Serial3.print("LM ");
-	// Serial3.print(lMotorPower, 3);
-	// Serial3.print(" RM ");
-	// Serial3.println(rMotorPower, 3);
 }
 
 void uds_irq() {
