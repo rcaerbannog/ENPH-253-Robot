@@ -74,6 +74,7 @@ void steeringControl(double steeringAngleDeg);
 void steeringControlManual(int pulseWidthMicros);
 void motorControl(double lMotorPower, double rMotorPower);
 void uds_irq();
+void testCode();
 
 //Define serial pins
 HardwareSerial Serial3(PB11, PB10);
@@ -124,7 +125,31 @@ void setup() {
 	// If needed, insert hardcoding for start and first turn here.
 }
 
+// Conversion to state machine
+enum State {TAPE_FOLLOWING, COLLISION_AVOIDANCE};
 void loop() {
+	// State s = TAPE_FOLLOWING;
+	// /*
+	// If we are on tape, go to tape following
+	// 	Here, if we see an object less than 15 cm in front, slow down until robot out of range. (Apply power/speed scale).
+	// Else (if we are off tape)
+	// 	If we see an object less than 15 cm in front, it may be a static obstacle. 
+	// 	Go to collision avoidance until the object is more than 20 cm away, or we are on tape, or no object is detected.
+	
+	
+	// */
+	// if (lastDistCm < 15.0) {
+	// 	s = COLLISION_AVOIDANCE;
+	// } else {
+
+	// }
+  	tapeFollowing();
+	return;
+	// testCode();
+}
+
+void testCode() {
+	steeringControlManual(1500);
 	// pollDistanceSensor();
 	// display_handler.clearDisplay();
   	// display_handler.setCursor(0, 0);
@@ -134,9 +159,6 @@ void loop() {
 	// display_handler.println(lastDistCm);
 	// display_handler.display();
 
-  	tapeFollowing();
-  	return;
-	
 	// motorControl(0.50, 0.50);
 	// steeringControlManual(1800);
 	// delay(1000);
@@ -185,16 +207,25 @@ void tapeFollowing() {
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
 	const int TAPE_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the tape sensor to be on tape
 
-	const double DEFAULT_POWER = 0.22; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
+	const double DEFAULT_POWER = 0.30; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
+	const double SLOW_DEFAULT_POWER = 0.22;	// The above, but when we want to go slow (e.g. off tape or re-entering)
 	const double STEERING_KP = 19.0;	// Steering angle PID proportionality constant
 	const double STEERING_KD = 0.00;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
-	const double MOTORDIF_KP = 0.05;
+	const double MOTORDIF_KP = 0;
 	const double MOTORDIF_KD = 0;	
-	const double MOTORDIF_TIME_KP = 0.002;	// increases differential if we are completely off tape for a long time
+	const double MOTORDIF_TIME_KP = 0;	// increases differential if we are completely off tape for a long time
 	// MOTORSCALE_KP may have to be reduced at lower DEFAULT_POWER and increased at higher DEFAULT_POWER. 
 	// Tune it like any other PID variable if the robot looks unstable / overshoots due to long control system response time.
 	bool skipLoop=0;
 	int offTapeLoops=0;
+
+	int brakeState = 0;	// 0 for not activated, 1 for active, 2 for offTape and active, 3 for onTape and active. Reset to 0 short while after reentering tape.
+	uint32_t brake12TimeMillis = 0;
+	uint32_t brake30TimeMillis = -1000000;
+	// brake system explanation:
+	// If we are on tape and we have been on tape for more than XX ms, normal motor control
+	// If we are off tape and we have 
+
 
 	// CONTROL LOOP
 	int loopCounter = 0;
@@ -208,6 +239,12 @@ void tapeFollowing() {
 		double rightMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
 		bool offTape = true;
 		bool onCheckpoint = false;
+
+		// handle interrupt resolution / tasks
+		// Make a dedicated queue for this later
+		// pollDistanceSensor();
+		pollHallSensor();
+
 		for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
 			tape_sensor_vals[i] = analogRead(PINS_TAPE_SENSORS[i]);
 			on_tape[i] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
@@ -216,6 +253,7 @@ void tapeFollowing() {
 			}
 		}
 		
+		uint32_t currentTime = millis();
 		if (offTape) {
 			if (prevError >= 0)	{	// relies on prevError not being updated to avoid wiping the check condition
 				error = (NUM_TAPE_SENSORS) / 2.0;
@@ -223,11 +261,24 @@ void tapeFollowing() {
 			else {	// prevError < 0
 				error = - (NUM_TAPE_SENSORS) / 2.0;
 			}
+
+			if (brakeState == 0) {
+				brakeState = 1;
+				brake12TimeMillis = currentTime + 500;	// or however many milliseconds you want
+			} else if (brakeState == 1 && currentTime > brake12TimeMillis) {
+				brakeState = 2;
+			}
 			offTapeLoops++;
 			// See if using sign of previous derivative helps here
 			// If we completely skipped over the tape line, then god help us we can't see that
 			// Perhaps do similar open-loop control to checkpoint: keep scanning as often as possible until we return to the tape line
 		} else {
+			if ((brakeState == 1 || brakeState == 2)) {	// we were previously off tape
+				brakeState = 3;
+				brake30TimeMillis = currentTime + 500;	// or however many milliseconds you want
+			} else if (brakeState == 3 && currentTime > brake30TimeMillis) {
+				brakeState = 0;
+			}
 			offTapeLoops=0;
 			error = errorFunc(tape_sensor_vals, TAPE_SENSOR_THRESHOLD);
 			// check if we are on a check point and which one it is
@@ -245,7 +296,7 @@ void tapeFollowing() {
 
 		if (onCheckpoint) {
 			steeringControl(0);
-			motorControl(DEFAULT_POWER, DEFAULT_POWER);
+			motorControl(SLOW_DEFAULT_POWER, SLOW_DEFAULT_POWER);
 			continue;
 		} else {
 			// Now deciding what to actually do
@@ -254,21 +305,24 @@ void tapeFollowing() {
 			// Encoder-based speed control can come later
 			errorDerivative = (error - prevError) / LOOP_TIME_MILLIS;
 			steeringAngleDeg = max(-60.0, min(60.0, STEERING_KP * error + STEERING_KD * errorDerivative));
-			motorDif = MOTORDIF_KP * error + MOTORDIF_KD * errorDerivative + ((error >= 0) ? 1 : -1) * MOTORDIF_TIME_KP * offTapeLoops;
-			leftMotorPower = DEFAULT_POWER - motorDif;
-			rightMotorPower = DEFAULT_POWER + motorDif;
-
 			steeringControl(steeringAngleDeg);
-			motorControl(leftMotorPower, rightMotorPower);
+
+			if (brakeState == 0) {
+				motorDif = MOTORDIF_KP * error + MOTORDIF_KD * errorDerivative + ((error >= 0) ? 1 : -1) * MOTORDIF_TIME_KP * offTapeLoops;
+				leftMotorPower = DEFAULT_POWER - motorDif;
+				rightMotorPower = DEFAULT_POWER + motorDif;
+				motorControl(leftMotorPower, rightMotorPower);
+			} else if (brakeState == 1) {
+				motorControl(0, 0);
+			} else if (brakeState == 2 || brakeState == 3) {
+				leftMotorPower = SLOW_DEFAULT_POWER - motorDif;
+				rightMotorPower = DEFAULT_POWER + motorDif;
+				motorControl(leftMotorPower, rightMotorPower);
+			}
 			
 			prevError = error;
 			prevErrorDerivative = errorDerivative;
 		}
-
-		// handle interrupt resolution / tasks
-		// Make a dedicated queue for this later
-		// pollDistanceSensor();
-		pollHallSensor();
 
 		digitalWrite(PIN_LED_BUILTIN, LOW);
 
