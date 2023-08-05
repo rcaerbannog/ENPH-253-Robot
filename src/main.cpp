@@ -30,12 +30,12 @@ const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA0, PA1, PA2, PA3, PA4, PA5};	
 /*
  * TAPE FOLLOWING
  */
-const double WHEELBASE = 125;	// In mm, Lengthwise distance between front and rear wheel axles
-const double WHEELSEP = 200;	// In mm, Widthwise distance between front wheels
+const double WHEELBASE = 133;	// In mm, Lengthwise distance between front and rear wheel axles
+const double WHEELSEP = 170;	// In mm, Widthwise distance between front wheels
 const int MOTOR_PWM_FREQ = 100;	// In Hz, PWM frequency to H-bridge gate drivers. Currently shared with servos.
 const int SERVO_PWM_FREQ = 100;
 const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 us. 
-const int MAX_STEERING_PULSEWIDTH_MICROS = 1950;	// absolute physical limit of left-driving servo rotation to left. Currently limited by chassis.
+const int MAX_STEERING_PULSEWIDTH_MICROS = 1950;	// (1950) absolute physical limit of left-driving servo rotation to left. Currently limited by chassis.
 const int MIN_STEERING_PULSEWIDTH_MICROS = 1180;	// absolute physical limit of left-driving servo rotation to right. Currently limited by inversion.
 const int BOMB_EJECTION_TIME_MILLIS = 1000;
 int bombEjectionEndTime = 0;
@@ -150,6 +150,8 @@ void loop() {
 
 void testCode() {
 	steeringControlManual(1500);
+	motorControl(0.40, 0.40);
+	delay(1000);
 	// pollDistanceSensor();
 	// display_handler.clearDisplay();
   	// display_handler.setCursor(0, 0);
@@ -208,13 +210,13 @@ void tapeFollowing() {
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
 	const int TAPE_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the tape sensor to be on tape
 
-	const double DEFAULT_POWER = 0.30; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
-	const double SLOW_DEFAULT_POWER = 0.22;	// The above, but when we want to go slow (e.g. off tape or re-entering)
+	const double DEFAULT_POWER = 0.35; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
+	const double SLOW_DEFAULT_POWER = 0.25;	// The above, but when we want to go slow (e.g. off tape or re-entering)
 	const double STEERING_KP = 19.0;	// Steering angle PID proportionality constant
-	const double STEERING_KD = 0.01;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
-	const double MOTORDIF_KP = 0.00;
+	const double STEERING_KD = 0.0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
+	const double MOTORDIF_KP = 0.02;
 	const double MOTORDIF_KD = 0;	
-	const double MOTORDIF_TIME_KP = 0;	// increases differential if we are completely off tape for a long time
+	const double MOTORDIF_TIME_KP = 0.002;	// increases differential if we are completely off tape for a long time
 	// MOTORSCALE_KP may have to be reduced at lower DEFAULT_POWER and increased at higher DEFAULT_POWER. 
 	// Tune it like any other PID variable if the robot looks unstable / overshoots due to long control system response time.
 	bool skipLoop=0;
@@ -222,7 +224,7 @@ void tapeFollowing() {
 
 	int brakeState = 0;	// 0 for not activated, 1 for active, 2 for offTape and active, 3 for onTape and active. Reset to 0 short while after reentering tape.
 	uint32_t brake12TimeMillis = 0;
-	uint32_t brake30TimeMillis = -1000000;
+	uint32_t brake30TimeMillis = 0;
 	// brake system explanation:
 	// If we are on tape and we have been on tape for more than XX ms, normal motor control
 	// If we are off tape and we have 
@@ -265,7 +267,7 @@ void tapeFollowing() {
 
 			if (brakeState == 0) {
 				brakeState = 1;
-				brake12TimeMillis = currentTimeMillis + 500;	// or however many milliseconds you want
+				brake12TimeMillis = currentTimeMillis + 250;	// or however many milliseconds you want
 			} else if (brakeState == 1 && currentTimeMillis > brake12TimeMillis) {
 				brakeState = 2;
 			}
@@ -276,7 +278,7 @@ void tapeFollowing() {
 		} else {
 			if ((brakeState == 1 || brakeState == 2)) {	// we were previously off tape
 				brakeState = 3;
-				brake30TimeMillis = currentTimeMillis + 500;	// or however many milliseconds you want
+				brake30TimeMillis = currentTimeMillis + 750;	// or however many milliseconds you want
 			} else if (brakeState == 3 && currentTimeMillis > brake30TimeMillis) {
 				brakeState = 0;
 			}
