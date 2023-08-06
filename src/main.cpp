@@ -40,6 +40,9 @@ const int MIN_STEERING_PULSEWIDTH_MICROS = 1180;	// absolute physical limit of l
 const int BOMB_EJECTION_TIME_MILLIS = 1000;
 int bombEjectionEndTime = 0;
 bool bombEject = false;
+bool isFull = false;
+uint32_t lastLeftBlockMotorTurnMillis = -1;	// default value -1 if no pulses received yet
+uint32_t lastRightBlockMotorTurnMillis = -1;	// default value -1 if no pulses received yet
 
 // DISTANCE SENSOR
 uint32_t udsLastPulseMicros = 0, udsEchoStartMicros = 0, udsEchoEndMicros = 0;
@@ -74,7 +77,7 @@ int loopCounter = 0;
 void interruptBombEjection();
 void writeToDisplay(const char *str);
 void pollDistanceSensor();
-void pollHallSensor();
+void pollBlockCollection();
 void pollTapeSensors();
 double errorFunc(int tape_sensor_vals[], int TAPE_SENSOR_THRESHOLD);
 void tapeFollowing();
@@ -176,6 +179,13 @@ void testCode() {
 	// delay(1000);
 }
 
+void leftBlockMotor_irq() {
+	lastLeftBlockMotorTurnMillis = millis();
+}
+
+void rightBlockMotor_irq() {
+	lastRightBlockMotorTurnMillis = millis();
+}
 
 void interruptBombEjection() {
 	digitalWrite(PIN_BLOCKMOTOR_IN, LOW);
@@ -193,7 +203,7 @@ void collisionAvoidanceOffTape() {
 	while (offTape && lastDistCm < 15.0) {	// we have recovered if we return to tape or have moved far away enough from the obstacle
 		pollDistanceSensor();
 		pollTapeSensors();
-		pollHallSensor();
+		pollBlockCollection();
 	}
 	motorControl(0, 0);
 	delay(500);
@@ -265,7 +275,7 @@ void tapeFollowing() {
 		// handle interrupt resolution / tasks
 		// Make a dedicated queue for this later
 		pollDistanceSensor();
-		pollHallSensor();
+		pollBlockCollection();
 		pollTapeSensors();
 
 		if (lastDistCm < 15.0 && offTape) {
@@ -415,8 +425,10 @@ void pollDistanceSensor() {
 	}
 }
 
-void pollHallSensor() {
-	if (bombEject && millis() > bombEjectionEndTime) {
+void pollBlockCollection() {
+	if (isFull) return;
+	int currentTimeMillis = millis();
+	if (bombEject && currentTimeMillis > bombEjectionEndTime) {
 		if (digitalRead(PIN_HALL_SENSOR) == HIGH) {	// bomb is gone: Hall sensor does not see magnetic field
 			digitalWrite(PIN_BLOCKMOTOR_OUT, LOW);
 			digitalWrite(PIN_BLOCKMOTOR_IN, HIGH);
@@ -424,6 +436,15 @@ void pollHallSensor() {
 		} else {	// bomb is still there
 			bombEjectionEndTime += 1000;	// check again 1000ms later
 		}
+	}
+
+	if ((currentTimeMillis > lastLeftBlockMotorTurnMillis - 5000 || currentTimeMillis > lastRightBlockMotorTurnMillis - 5000)
+			&& (lastLeftBlockMotorTurnMillis != -1 && lastRightBlockMotorTurnMillis != -1)) {
+			detachInterrupt(PIN_HALL_SENSOR);
+			isFull = true;
+			bombEject = false;
+			digitalWrite(PIN_BLOCKMOTOR_IN, LOW);
+			digitalWrite(PIN_BLOCKMOTOR_OUT, LOW);
 	}
 }
 
