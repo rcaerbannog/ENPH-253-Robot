@@ -15,8 +15,8 @@
 #define PIN_HALL_SENSOR PB5	// as digital input
 #define PIN_BLOCKMOTOR_IN PB15	// as digital output (non-PWM, so max speed)
 #define PIN_BLOCKMOTOR_OUT PB14	// as digital output (non-PWM, so max speed)
-#define PIN_BLOCKMOTOR_LEFT_ENCODER PB10	// as digital input
-#define PIN_BLOCKMOTOR_RIGHT_ENCODER PB11	// as digital input
+#define PIN_BLOCKMOTOR_LEFT_ENCODER PA15	// as digital input
+#define PIN_BLOCKMOTOR_RIGHT_ENCODER PB3	// as digital input
 
 #define PIN_LED_BUILTIN PC13	// DEBUG ONLY: USE TO INDICATE CONTROL LOOP PROGRESSION WITHOUT LCD DISPLAY
 
@@ -194,6 +194,22 @@ void leftBlockMotorEncoder_irq() {
 
 void rightBlockMotorEncoder_irq() {
 	lastRightEncoderPulseMillis = millis();
+}
+
+void uds_irq() {
+	if (udsPulse) {
+		udsEchoEndMicros = micros();
+		udsPulse = false;
+		if (udsEchoStartMicros - udsLastPulseMicros < 30000) {
+			pulseReceived = true;
+			lastDistCm = (udsEchoEndMicros - udsEchoStartMicros) / 58.0;
+		} else {
+			lastDistCm = 9999.0;	// invalid dist
+		}
+	} else {
+		udsEchoStartMicros = micros();
+		udsPulse = true;
+	}
 }
 
 /*
@@ -545,20 +561,4 @@ void motorControl(double lMotorPower, double rMotorPower) {
 	// Serial3.print(lMotorPower, 3);
 	// Serial3.print(" RM ");
 	// Serial3.println(rMotorPower, 3);
-}
-
-void uds_irq() {
-  if (udsPulse) {
-    udsEchoEndMicros = micros();
-    udsPulse = false;
-    lastDistCm = (udsEchoEndMicros - udsEchoStartMicros) / 58.0;
-    if (udsEchoStartMicros - udsLastPulseMicros < 30000) {
-      pulseReceived = true;
-    } else {
-      lastDistCm = 0;
-    }
-  } else {
-    udsEchoStartMicros = micros();
-    udsPulse = true;
-  }
 }
