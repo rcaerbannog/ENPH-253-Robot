@@ -40,21 +40,12 @@ const int MIN_STEERING_PULSEWIDTH_MICROS = 1180;	// absolute physical limit of l
 const int BOMB_EJECTION_TIME_MILLIS = 1000;
 int bombEjectionEndTime = 0;
 bool bombEject = false;
-bool isFull = false;
-uint32_t lastLeftBlockMotorTurnMillis = -1;	// default value -1 if no pulses received yet
-uint32_t lastRightBlockMotorTurnMillis = -1;	// default value -1 if no pulses received yet
 
 // DISTANCE SENSOR
 uint32_t udsLastPulseMicros = 0, udsEchoStartMicros = 0, udsEchoEndMicros = 0;
 bool udsPulse = false;
 bool pulseReceived = false;
 double lastDistCm = 0;
-
-int tape_sensor_vals[NUM_TAPE_SENSORS] = {0, 0, 0, 0, 0, 0};
-bool on_tape[NUM_TAPE_SENSORS] = {true, true, true, true, true, true};
-bool offTape = true;
-bool onCheckpoint = false;
-const int TAPE_SENSOR_THRESHOLD = 100;	// The analogRead() value above which we consider the tape sensor to be on tape
 
 /*
 Note: Motor PWM frequency cannot be too high, else gate driver turn-on time 
@@ -70,15 +61,13 @@ See scope image sent by Yun in 'general' channel for example on 1 kHz.
 Adafruit_SSD1306 display_handler(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 double debugLeftWheelAngle = 0;
-int loopCounter = 0;
 
 
 // put function declarations here:
 void interruptBombEjection();
 void writeToDisplay(const char *str);
 void pollDistanceSensor();
-void pollBlockCollection();
-void pollTapeSensors();
+void pollHallSensor();
 double errorFunc(int tape_sensor_vals[], int TAPE_SENSOR_THRESHOLD);
 void tapeFollowing();
 void steeringControl(double steeringAngleDeg);
@@ -137,7 +126,7 @@ void setup() {
 }
 
 // Conversion to state machine
-enum State {TAPE_FOLLOWING, COLLISION_OFF_TAPE, COLLISION_ON_TAPE};
+enum State {TAPE_FOLLOWING, COLLISION_AVOIDANCE};
 void loop() {
 	// State s = TAPE_FOLLOWING;
 	// /*
@@ -160,17 +149,17 @@ void loop() {
 }
 
 void testCode() {
-	// steeringControlManual(1500);
-	// motorControl(0.40, 0.40);
-	// delay(1000);
+	steeringControlManual(1500);
+	motorControl(0.40, 0.40);
+	delay(1000);
 	// pollDistanceSensor();
-	display_handler.clearDisplay();
-  	display_handler.setCursor(0, 0);
-	display_handler.print("Pulse micros: ");
-	display_handler.println(udsEchoEndMicros);
-	display_handler.print("Distance: ");
-	display_handler.println(lastDistCm);
-	display_handler.display();
+	// display_handler.clearDisplay();
+  	// display_handler.setCursor(0, 0);
+	// display_handler.print("Pulse micros: ");
+	// display_handler.println(udsEchoEndMicros);
+	// display_handler.print("Distance: ");
+	// display_handler.println(lastDistCm);
+	// display_handler.display();
 
 	// motorControl(0.50, 0.50);
 	// steeringControlManual(1800);
@@ -179,35 +168,12 @@ void testCode() {
 	// delay(1000);
 }
 
-void leftBlockMotor_irq() {
-	lastLeftBlockMotorTurnMillis = millis();
-}
-
-void rightBlockMotor_irq() {
-	lastRightBlockMotorTurnMillis = millis();
-}
 
 void interruptBombEjection() {
 	digitalWrite(PIN_BLOCKMOTOR_IN, LOW);
 	digitalWrite(PIN_BLOCKMOTOR_OUT, HIGH);
 	bombEject = true;
 	bombEjectionEndTime = millis() + BOMB_EJECTION_TIME_MILLIS;
-}
-
-void collisionAvoidanceOffTape() {
-	// If we are off tape, stop immediately and back up with straightened steering.
-	steeringControl(0);
-	motorControl(0, 0);
-	delay(1000);
-	motorControl(-0.2, -0.2);
-	while (offTape && lastDistCm < 15.0) {	// we have recovered if we return to tape or have moved far away enough from the obstacle
-		pollDistanceSensor();
-		pollTapeSensors();
-		pollBlockCollection();
-	}
-	motorControl(0, 0);
-	delay(500);
-	// If the object in front persists for ~1s, stop and back up a bit. Update steering all the while.
 }
 
 /*
@@ -235,11 +201,14 @@ void tapeFollowing() {
 
 	// REDUCE THIS TO 20 IN TESTING
 	const int LOOP_TIME_MILLIS = 5;	// Control loop period. Must be enough time for the code inside to execute!
-	// int nextLoopTime = millis() + LOOP_TIME_MILLIS;
-	uint32_t lastLoopTimeMillis = millis() - 5;
+	int nextLoopTime = millis() + LOOP_TIME_MILLIS;
+	uint32_t lastLoopTimeMillis = millis();
 
+	int tape_sensor_vals[NUM_TAPE_SENSORS] = {0, 0, 0, 0, 0, 0};
+	bool on_tape[NUM_TAPE_SENSORS] = {true, true, true, true};
 	double prevError = 0;	// from previous control loop, used for derivative control only if prevLeftOnTape and prevRightOnTape.
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
+	const int TAPE_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the tape sensor to be on tape
 
 	const double DEFAULT_POWER = 0.35; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 	const double SLOW_DEFAULT_POWER = 0.25;	// The above, but when we want to go slow (e.g. off tape or re-entering)
@@ -250,6 +219,7 @@ void tapeFollowing() {
 	const double MOTORDIF_TIME_KP = 0.002;	// increases differential if we are completely off tape for a long time
 	// MOTORSCALE_KP may have to be reduced at lower DEFAULT_POWER and increased at higher DEFAULT_POWER. 
 	// Tune it like any other PID variable if the robot looks unstable / overshoots due to long control system response time.
+	bool skipLoop=0;
 	int offTapeLoops=0;
 
 	int brakeState = 0;	// 0 for not activated, 1 for active, 2 for offTape and active, 3 for onTape and active. Reset to 0 short while after reentering tape.
@@ -261,7 +231,7 @@ void tapeFollowing() {
 
 
 	// CONTROL LOOP
-	
+	int loopCounter = 0;
 	while (true) {
 		digitalWrite(PIN_LED_BUILTIN, HIGH);	// DEBUG ONLY, for monitoring control loop progression without LCD display
 		double error;	// Unitless; Positive error means to right of tape, negative to left; prevError only for debug
@@ -270,18 +240,23 @@ void tapeFollowing() {
 		double motorDif;	// Out of 1.0, power added to right motor vs left
 		double leftMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
 		double rightMotorPower;	// Between -1 (full reverse) and 1 (full forwards); 0 is off
+		bool offTape = true;
+		bool onCheckpoint = false;
 
-		uint32_t currentTimeMillis = millis();	//TODO: move this back after the collision avoidance check
 		// handle interrupt resolution / tasks
 		// Make a dedicated queue for this later
-		pollDistanceSensor();
-		pollBlockCollection();
-		pollTapeSensors();
+		// pollDistanceSensor();
+		pollHallSensor();
 
-		if (lastDistCm < 15.0 && offTape) {
-			collisionAvoidanceOffTape();
+		for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
+			tape_sensor_vals[i] = analogRead(PINS_TAPE_SENSORS[i]);
+			on_tape[i] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
+			if (on_tape[i]) {
+				offTape = false;
+			}
 		}
 		
+		uint32_t currentTimeMillis = millis();
 		if (offTape) {
 			if (prevError >= 0)	{	// relies on prevError not being updated to avoid wiping the check condition
 				error = (NUM_TAPE_SENSORS) / 2.0;
@@ -309,7 +284,7 @@ void tapeFollowing() {
 			}
 			offTapeLoops=0;
 			error = errorFunc(tape_sensor_vals, TAPE_SENSOR_THRESHOLD);
-			// check if we are on a check point (and later, which one it is?)
+			// check if we are on a check point and which one it is
 			bool prevH=0;
 			for (int i = 1; i < NUM_TAPE_SENSORS; i++){
 				if (!on_tape[i]&&on_tape[i-1]){
@@ -327,6 +302,10 @@ void tapeFollowing() {
 			motorControl(SLOW_DEFAULT_POWER, SLOW_DEFAULT_POWER);
 			continue;
 		} else {
+			// Now deciding what to actually do
+			// For now, avoid case-based control
+			// Set neutral motor power to 0.5 and add power (fraction or percentage?) to this
+			// Encoder-based speed control can come later
 			errorDerivative = (currentTimeMillis > lastLoopTimeMillis) ? (error - prevError) / (currentTimeMillis - lastLoopTimeMillis) : 0;
 			steeringAngleDeg = max(-60.0, min(60.0, STEERING_KP * error + STEERING_KD * errorDerivative));
 			steeringControl(steeringAngleDeg);
@@ -354,27 +333,26 @@ void tapeFollowing() {
 		// COMMENT OUT DEBUG DISPLAY CODE IF THERE IS NO DISPLAY, OTHERWISE EXECUTION WILL STALL
 		// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
 		// The display print together with other code takes about 36ms to print, so control loop time of 40ms (25Hz) is fine.
-		display_handler.clearDisplay();
-		display_handler.setCursor(0, 0);
-		display_handler.printf("Loop %d Time %d\n", loopCounter, millis() - currentTimeMillis);
-		// display_handler.printf("Loop %d Time %d", loopCounter, millis() - (nextLoopTime - LOOP_TIME_MILLIS));
-		for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%5d", tape_sensor_vals[i]);
-		display_handler.println();
-		display_handler.print(" E ");
-		display_handler.print(error, 2);
-		display_handler.print(" dE ");
-		display_handler.println(errorDerivative, 2);
-		display_handler.print("LM ");
-		display_handler.print(leftMotorPower, 3);
-		display_handler.print(" RM ");
-		display_handler.println(rightMotorPower, 3);
-		display_handler.print("Steer ");
-		display_handler.print(steeringAngleDeg, 1);
-		display_handler.print(" L ");
-		display_handler.println(debugLeftWheelAngle, 1);
-		display_handler.print("UDS cm: ");
-		display_handler.print(lastDistCm);
-		display_handler.display();
+		// display_handler.clearDisplay();
+		// display_handler.setCursor(0, 0);
+		// for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%5d", tape_sensor_vals[i]);
+		// Serial3.println();
+		// Serial3.print(" E ");
+		// Serial3.print(error, 2);
+		// Serial3.print(" dE ");
+		// Serial3.println(errorDerivative, 2);
+		// Serial3.print("LM ");
+		// Serial3.print(leftMotorPower, 3);
+		// Serial3.print(" RM ");
+		// Serial3.println(rightMotorPower, 3);
+		// Serial3.print("Steer ");
+		// Serial3.print(steeringAngleDeg, 1);
+		// Serial3.print(" L ");
+		// Serial3.println(debugLeftWheelAngle, 1);
+		// Serial3.printf("Loop %d\n", loopCounter);
+		// // display_handler.display(); (REMOVED)
+		// Serial3.printf("Time %d", millis() - (nextLoopTime - LOOP_TIME_MILLIS));// (REMOVED)
+		// display_handler.display();
 		
 		
 		// if (millis() >= nextLoopTime) {
@@ -388,16 +366,6 @@ void tapeFollowing() {
 	// right now, the control loop should never end. If we get here there's been an error.
 	motorControl(0.0, 0.0);
 	delay(10000000);
-}
-
-void pollTapeSensors() {
-	for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
-		tape_sensor_vals[i] = analogRead(PINS_TAPE_SENSORS[i]);
-		on_tape[i] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
-		if (on_tape[i]) {
-			offTape = false;
-		}
-	}
 }
 
 
@@ -425,10 +393,8 @@ void pollDistanceSensor() {
 	}
 }
 
-void pollBlockCollection() {
-	if (isFull) return;
-	int currentTimeMillis = millis();
-	if (bombEject && currentTimeMillis > bombEjectionEndTime) {
+void pollHallSensor() {
+	if (bombEject && millis() > bombEjectionEndTime) {
 		if (digitalRead(PIN_HALL_SENSOR) == HIGH) {	// bomb is gone: Hall sensor does not see magnetic field
 			digitalWrite(PIN_BLOCKMOTOR_OUT, LOW);
 			digitalWrite(PIN_BLOCKMOTOR_IN, HIGH);
@@ -436,15 +402,6 @@ void pollBlockCollection() {
 		} else {	// bomb is still there
 			bombEjectionEndTime += 1000;	// check again 1000ms later
 		}
-	}
-
-	if ((currentTimeMillis > lastLeftBlockMotorTurnMillis - 5000 || currentTimeMillis > lastRightBlockMotorTurnMillis - 5000)
-			&& (lastLeftBlockMotorTurnMillis != -1 && lastRightBlockMotorTurnMillis != -1)) {
-			detachInterrupt(PIN_HALL_SENSOR);
-			isFull = true;
-			bombEject = false;
-			digitalWrite(PIN_BLOCKMOTOR_IN, LOW);
-			digitalWrite(PIN_BLOCKMOTOR_OUT, LOW);
 	}
 }
 
@@ -549,6 +506,11 @@ void motorControl(double lMotorPower, double rMotorPower) {
 		pwm_start(PIN_RMOTOR_FWD, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 		pwm_start(PIN_RMOTOR_REV, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 	}
+
+	// Serial3.print("LM ");
+	// Serial3.print(lMotorPower, 3);
+	// Serial3.print(" RM ");
+	// Serial3.println(rMotorPower, 3);
 }
 
 void uds_irq() {
