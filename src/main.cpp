@@ -265,7 +265,7 @@ void tapeFollowing() {
 				error = - (NUM_TAPE_SENSORS) / 2.0;
 			}
 
-			if (brakeState == 0) {
+			if (brakeState == 0 || brakeState == 3) {
 				brakeState = 1;
 				brake12TimeMillis = currentTimeMillis + 250;	// or however many milliseconds you want
 			} else if (brakeState == 1 && currentTimeMillis > brake12TimeMillis) {
