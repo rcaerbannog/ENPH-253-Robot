@@ -67,7 +67,7 @@ See scope image sent by Yun in 'general' channel for example on 1 kHz.
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
 #define OLED_RESET -1 // This display does not have a reset pin accessible
-Adafruit_SSD1306 display_handler(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+// Adafruit_SSD1306 display_handler(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 double debugLeftWheelAngle = 0;
 int loopCounter = 0;
@@ -88,7 +88,7 @@ void uds_irq();
 void testCode();
 
 //Define serial pins
-HardwareSerial Serial3(PB11, PB10);
+HardwareSerial Serial3(USART3);
 
 
 void setup() {
@@ -155,6 +155,7 @@ void loop() {
 
 	// }
   	tapeFollowing();
+	Serial3.println("Out of tape following???");
 	return;
 	// testCode();
 }
@@ -164,13 +165,13 @@ void testCode() {
 	// motorControl(0.40, 0.40);
 	// delay(1000);
 	// pollDistanceSensor();
-	display_handler.clearDisplay();
-  	display_handler.setCursor(0, 0);
-	display_handler.print("Pulse micros: ");
-	display_handler.println(udsEchoEndMicros);
-	display_handler.print("Distance: ");
-	display_handler.println(lastDistCm);
-	display_handler.display();
+	// display_handler.clearDisplay();
+  	// display_handler.setCursor(0, 0);
+	// display_handler.print("Pulse micros: ");
+	// display_handler.println(udsEchoEndMicros);
+	// display_handler.print("Distance: ");
+	// display_handler.println(lastDistCm);
+	// display_handler.display();
 
 	// motorControl(0.50, 0.50);
 	// steeringControlManual(1800);
@@ -180,14 +181,17 @@ void testCode() {
 }
 
 void leftBlockMotor_irq() {
+	Serial3.println("leftBlockMotor_irq");
 	lastLeftBlockMotorTurnMillis = millis();
 }
 
 void rightBlockMotor_irq() {
+	Serial3.println("rightBlockMotor_irq");
 	lastRightBlockMotorTurnMillis = millis();
 }
 
 void interruptBombEjection() {
+	Serial3.println("interruptBombEjection");
 	digitalWrite(PIN_BLOCKMOTOR_IN, LOW);
 	digitalWrite(PIN_BLOCKMOTOR_OUT, HIGH);
 	bombEject = true;
@@ -195,6 +199,7 @@ void interruptBombEjection() {
 }
 
 void collisionAvoidanceOffTape() {
+	Serial3.println("collisionAvoidanceOffTape");
 	// If we are off tape, stop immediately and back up with straightened steering.
 	steeringControl(0);
 	motorControl(0, 0);
@@ -232,6 +237,7 @@ void tapeFollowing() {
 	Maybe just keep ~10 control loops or so.
 
 	*/
+	Serial3.println("tapeFollowing");
 
 	// REDUCE THIS TO 20 IN TESTING
 	const int LOOP_TIME_MILLIS = 5;	// Control loop period. Must be enough time for the code inside to execute!
@@ -274,15 +280,22 @@ void tapeFollowing() {
 		uint32_t currentTimeMillis = millis();	//TODO: move this back after the collision avoidance check
 		// handle interrupt resolution / tasks
 		// Make a dedicated queue for this later
+
+		Serial3.println(1);
 		pollDistanceSensor();
+		Serial3.println(2);
 		pollBlockCollection();
+		Serial3.println(3);
 		pollTapeSensors();
+		Serial3.println(4);
 
 		if (lastDistCm < 15.0 && offTape) {
 			collisionAvoidanceOffTape();
 		}
+		Serial3.println(5);
 		
 		if (offTape) {
+			Serial3.println(6);
 			if (prevError >= 0)	{	// relies on prevError not being updated to avoid wiping the check condition
 				error = (NUM_TAPE_SENSORS) / 2.0;
 			}
@@ -297,10 +310,12 @@ void tapeFollowing() {
 				brakeState = 2;
 			}
 			offTapeLoops++;
+			Serial3.println(7);
 			// See if using sign of previous derivative helps here
 			// If we completely skipped over the tape line, then god help us we can't see that
 			// Perhaps do similar open-loop control to checkpoint: keep scanning as often as possible until we return to the tape line
 		} else {
+			Serial3.println(8);
 			if ((brakeState == 1 || brakeState == 2)) {	// we were previously off tape
 				brakeState = 3;
 				brake30TimeMillis = currentTimeMillis + 750;	// or however many milliseconds you want
@@ -320,25 +335,32 @@ void tapeFollowing() {
 					break;
 				}
 			}
+			Serial3.println(9);
 		}
 
 		if (onCheckpoint) {
+			Serial3.println(10);
 			steeringControl(0);
 			motorControl(SLOW_DEFAULT_POWER, SLOW_DEFAULT_POWER);
 			continue;
 		} else {
+			Serial3.println(11);
 			errorDerivative = (currentTimeMillis > lastLoopTimeMillis) ? (error - prevError) / (currentTimeMillis - lastLoopTimeMillis) : 0;
 			steeringAngleDeg = max(-60.0, min(60.0, STEERING_KP * error + STEERING_KD * errorDerivative));
 			steeringControl(steeringAngleDeg);
+			Serial3.println(12);
 
 			if (brakeState == 0) {
+				Serial3.println(13);
 				motorDif = MOTORDIF_KP * error + MOTORDIF_KD * errorDerivative + ((error >= 0) ? 1 : -1) * MOTORDIF_TIME_KP * offTapeLoops;
 				leftMotorPower = DEFAULT_POWER - motorDif;
 				rightMotorPower = DEFAULT_POWER + motorDif;
 				motorControl(leftMotorPower, rightMotorPower);
 			} else if (brakeState == 1) {
+				Serial3.println(14);
 				motorControl(0, 0);
 			} else if (brakeState == 2 || brakeState == 3) {
+				Serial3.println(15);
 				leftMotorPower = SLOW_DEFAULT_POWER - motorDif;
 				rightMotorPower = DEFAULT_POWER + motorDif;
 				motorControl(leftMotorPower, rightMotorPower);
@@ -347,6 +369,7 @@ void tapeFollowing() {
 			prevError = error;
 			prevErrorDerivative = errorDerivative;
 			lastLoopTimeMillis = currentTimeMillis;
+			Serial3.println(16);
 		}
 
 		digitalWrite(PIN_LED_BUILTIN, LOW);
@@ -354,27 +377,27 @@ void tapeFollowing() {
 		// COMMENT OUT DEBUG DISPLAY CODE IF THERE IS NO DISPLAY, OTHERWISE EXECUTION WILL STALL
 		// WHILE TRYING TO WRITE TO A NON-EXISTENT DISPLAY (UNTIL REQUEST TIMEOUT AFTER ~5 SECONDS)
 		// The display print together with other code takes about 36ms to print, so control loop time of 40ms (25Hz) is fine.
-		display_handler.clearDisplay();
-		display_handler.setCursor(0, 0);
-		display_handler.printf("Loop %d Time %d\n", loopCounter, millis() - currentTimeMillis);
+		// display_handler.clearDisplay();
+		// display_handler.setCursor(0, 0);
+		// display_handler.printf("Loop %d Time %d\n", loopCounter, millis() - currentTimeMillis);
 		// display_handler.printf("Loop %d Time %d", loopCounter, millis() - (nextLoopTime - LOOP_TIME_MILLIS));
-		for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%5d", tape_sensor_vals[i]);
-		display_handler.println();
-		display_handler.print(" E ");
-		display_handler.print(error, 2);
-		display_handler.print(" dE ");
-		display_handler.println(errorDerivative, 2);
-		display_handler.print("LM ");
-		display_handler.print(leftMotorPower, 3);
-		display_handler.print(" RM ");
-		display_handler.println(rightMotorPower, 3);
-		display_handler.print("Steer ");
-		display_handler.print(steeringAngleDeg, 1);
-		display_handler.print(" L ");
-		display_handler.println(debugLeftWheelAngle, 1);
-		display_handler.print("UDS cm: ");
-		display_handler.print(lastDistCm);
-		display_handler.display();
+		// for (int i = 0; i < NUM_TAPE_SENSORS; i++) display_handler.printf("%5d", tape_sensor_vals[i]);
+		// display_handler.println();
+		// display_handler.print(" E ");
+		// display_handler.print(error, 2);
+		// display_handler.print(" dE ");
+		// display_handler.println(errorDerivative, 2);
+		// display_handler.print("LM ");
+		// display_handler.print(leftMotorPower, 3);
+		// display_handler.print(" RM ");
+		// display_handler.println(rightMotorPower, 3);
+		// display_handler.print("Steer ");
+		// display_handler.print(steeringAngleDeg, 1);
+		// display_handler.print(" L ");
+		// display_handler.println(debugLeftWheelAngle, 1);
+		// display_handler.print("UDS cm: ");
+		// display_handler.print(lastDistCm);
+		// display_handler.display();
 		
 		
 		// if (millis() >= nextLoopTime) {
@@ -384,6 +407,7 @@ void tapeFollowing() {
 		// 	nextLoopTime += LOOP_TIME_MILLIS;	// may add emergency handling if we have exceeded the previous loop time
 		// }
 		loopCounter++;
+		Serial3.println(17);
 	}
 	// right now, the control loop should never end. If we get here there's been an error.
 	motorControl(0.0, 0.0);
@@ -406,10 +430,10 @@ void pollTapeSensors() {
  * @param str The string to show on the display.
  */ 
 void writeToDisplay(const char *str) {
-	display_handler.clearDisplay();
-	display_handler.setCursor(0, 0);
-	display_handler.println(str);
-	display_handler.display();
+	// display_handler.clearDisplay();
+	// display_handler.setCursor(0, 0);
+	// display_handler.println(str);
+	// display_handler.display();
 }
 
 void pollDistanceSensor() {
@@ -552,6 +576,7 @@ void motorControl(double lMotorPower, double rMotorPower) {
 }
 
 void uds_irq() {
+	Serial3.println("uds_irq");
   if (udsPulse) {
     udsEchoEndMicros = micros();
     udsPulse = false;
