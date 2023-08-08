@@ -176,6 +176,7 @@ void interruptBombEjection() {
 	bombEjectionEndTime = millis() + BOMB_EJECTION_TIME_MILLIS;
 }
 
+
 /*
  * Non-PID for now
  * Assume for now that we want to go at full speed all the time, no power differences
@@ -210,11 +211,11 @@ void tapeFollowing() {
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
 	const int TAPE_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the tape sensor to be on tape
 
-	const double DEFAULT_POWER = 0.40; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
+	const double DEFAULT_POWER = 0.4; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 	const double SLOW_DEFAULT_POWER = 0.25;	// The above, but when we want to go slow (e.g. off tape or re-entering)
-	const double STEERING_KP = 13.0;	// Steering angle PID proportionality constant
+	const double STEERING_KP = 10.0;	// Steering angle PID proportionality constant
 	const double STEERING_KD = 1.0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
-	const double MOTORDIF_KP = 0.02;
+	const double MOTORDIF_KP = 0.01;
 	const double MOTORDIF_KD = 0.002;	
 	const double MOTORDIF_TIME_KP = 0.002;	// increases differential if we are completely off tape for a long time
 	// MOTORSCALE_KP may have to be reduced at lower DEFAULT_POWER and increased at higher DEFAULT_POWER. 
@@ -222,9 +223,11 @@ void tapeFollowing() {
 	bool skipLoop=0;
 	int offTapeLoops=0;
 
+	enum motorControlState {NORMAL, OFF_TAPE_BRAKE, OFF_TAPE_STEADY, RECOVERY_INERTIA_COUNTER, RECOVERY_STEADY};	// FOR USE LATER
 	int brakeState = 0;	// 0 for not activated, 1 for active, 2 for offTape and active, 3 for onTape and active. Reset to 0 short while after reentering tape.
 	uint32_t brake12TimeMillis = 0;
-	uint32_t brake30TimeMillis = 0;
+	uint32_t brake34TimeMillis = 0;
+	uint32_t brake40TimeMillis = 0;
 	// brake system explanation:
 	// If we are on tape and we have been on tape for more than XX ms, normal motor control
 	// If we are off tape and we have 
@@ -270,7 +273,7 @@ void tapeFollowing() {
 				error = - (NUM_TAPE_SENSORS) / 2.0;
 			}
 
-			if (brakeState == 0) {
+			if (brakeState == 0 || brakeState == 3 || brakeState == 4) {	// we were on tape
 				brakeState = 1;
 				brake12TimeMillis = currentTimeMillis + 250;	// or however many milliseconds you want
 			} else if (brakeState == 1 && currentTimeMillis > brake12TimeMillis) {
@@ -283,8 +286,11 @@ void tapeFollowing() {
 		} else {
 			if ((brakeState == 1 || brakeState == 2)) {	// we were previously off tape
 				brakeState = 3;
-				brake30TimeMillis = currentTimeMillis + 750;	// or however many milliseconds you want
-			} else if (brakeState == 3 && currentTimeMillis > brake30TimeMillis) {
+				brake34TimeMillis = currentTimeMillis + 30;	// or however many milliseconds you want. Maybe vary with time in brakeState1?
+			} else if (brakeState == 3 && currentTimeMillis > brake34TimeMillis) {
+				brakeState = 4;
+				brake40TimeMillis = currentTimeMillis + 750;
+			} else if (brakeState == 4 && currentTimeMillis > brake40TimeMillis) {
 				brakeState = 0;
 			}
 			offTapeLoops=0;
@@ -322,14 +328,20 @@ void tapeFollowing() {
 				motorControl(leftMotorPower, rightMotorPower);
 			} else if (brakeState == 1) {
 				if (error > 0) {
-					motorControl(-0.25, 0.1);
+					motorControl(-0.3, 0.1);
 				} else {
-					motorControl(0.1, -0.25);
+					motorControl(0.1, -0.3);
 				}
-			} else if (brakeState == 2 || brakeState == 3) {
+			} else if (brakeState == 2 || brakeState == 4) {	// try changing this to const differential
 				leftMotorPower = SLOW_DEFAULT_POWER - motorDif;
-				rightMotorPower = DEFAULT_POWER + motorDif;
+				rightMotorPower = SLOW_DEFAULT_POWER + motorDif;
 				motorControl(leftMotorPower, rightMotorPower);
+			} else if (brakeState == 3) {
+				if (error > 0) {
+					motorControl(0, 1);
+				} else {
+					motorControl(1, 0);
+				}
 			}
 			
 			prevError = error;
