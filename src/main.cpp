@@ -15,8 +15,8 @@
 #define PIN_HALL_SENSOR PB5	// as digital input
 #define PIN_BLOCKMOTOR_IN PB15	// as digital output (non-PWM, so max speed)
 #define PIN_BLOCKMOTOR_OUT PB14	// as digital output (non-PWM, so max speed)
-#define PIN_BLOCKMOTOR_LEFT_ENCODER PB11	// as digital input
-#define PIN_BLOCKMOTOR_RIGHT_ENCODER PB10	// as digital input
+#define PIN_BLOCKMOTOR_LEFT_ENCODER PB12	// as digital input
+#define PIN_BLOCKMOTOR_RIGHT_ENCODER PB13	// as digital input
 
 #define PIN_LED_BUILTIN PC13	// DEBUG ONLY: USE TO INDICATE CONTROL LOOP PROGRESSION WITHOUT LCD DISPLAY
 
