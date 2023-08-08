@@ -211,9 +211,9 @@ void tapeFollowing() {
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
 	const int TAPE_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the tape sensor to be on tape
 
-	const double DEFAULT_POWER = 0.4; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
+	const double DEFAULT_POWER = 0.45; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 	const double SLOW_DEFAULT_POWER = 0.25;	// The above, but when we want to go slow (e.g. off tape or re-entering)
-	const double STEERING_KP = 10.0;	// Steering angle PID proportionality constant
+	const double STEERING_KP = 9.0;	// Steering angle PID proportionality constant
 	const double STEERING_KD = 1.0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
 	const double MOTORDIF_KP = 0.01;
 	const double MOTORDIF_KD = 0.002;	
@@ -267,10 +267,10 @@ void tapeFollowing() {
 
 		if (offTape) {
 			if (prevError >= 0)	{	// relies on prevError not being updated to avoid wiping the check condition
-				error = (NUM_TAPE_SENSORS) / 2.0;
+				error = (NUM_TAPE_SENSORS + 1) / 2.0;
 			}
 			else {	// prevError < 0
-				error = - (NUM_TAPE_SENSORS) / 2.0;
+				error = - (NUM_TAPE_SENSORS + 1) / 2.0;
 			}
 
 			if (brakeState == 0 || brakeState == 3 || brakeState == 4) {	// we were on tape
@@ -328,9 +328,9 @@ void tapeFollowing() {
 				motorControl(leftMotorPower, rightMotorPower);
 			} else if (brakeState == 1) {
 				if (error > 0) {
-					motorControl(-0.3, 0.1);
+					motorControl(-0.3, 0.2);
 				} else {
-					motorControl(0.1, -0.3);
+					motorControl(0.2, -0.3);
 				}
 			} else if (brakeState == 2 || brakeState == 4) {	// try changing this to const differential
 				leftMotorPower = SLOW_DEFAULT_POWER - motorDif;
