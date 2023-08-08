@@ -20,8 +20,8 @@
 
 #define PIN_LED_BUILTIN PC13	// DEBUG ONLY: USE TO INDICATE CONTROL LOOP PROGRESSION WITHOUT LCD DISPLAY
 
-#define PIN_UDS_FRONT_ECHO PB0	// as digital output
-#define PIN_UDS_FRONT_TRIGGER PB1	// as digital input
+#define PIN_UDS_FRONT_ECHO PB1	// as digital output
+#define PIN_UDS_FRONT_TRIGGER PB0	// as digital input
 
 //#define PIN_CHECKPOINT_SENSOR_LEFT PA1	// as analog input
 //#define PIN_CHECKPOINT_SENSOR_RIGHT PA0	// as analog input
@@ -49,7 +49,7 @@ volatile bool isFull = false;
 volatile uint32_t udsLastPulseMicros = 0, udsEchoStartMicros = 0, udsEchoEndMicros = 0;
 volatile bool udsPulse = false;
 volatile bool pulseReceived = false;
-volatile double lastDistCm = 0;
+volatile double lastDistCm = 9999.0;
 
 /*
 Note: Motor PWM frequency cannot be too high, else gate driver turn-on time 
@@ -81,6 +81,7 @@ void steeringControlManual(int pulseWidthMicros);
 void motorControl(double lMotorPower, double rMotorPower);
 void uds_irq();
 void testCode();
+void collisionAvoidanceOffTape();
 
 //Define serial pins
 // HardwareSerial Serial3(PB11, PB10);
@@ -157,26 +158,30 @@ void loop() {
 	// }
   	// tapeFollowing();
 	// return;
+	pollDistanceSensor();
 	testCode();
-	pollHallSensor();
+	if (lastDistCm < 15.0) {
+		collisionAvoidanceOffTape();
+	}
+
+	// pollHallSensor();
 }
 
 void testCode() {
-	steeringControlManual(1500);
-	motorControl(0.40, 0.40);
-	display_handler.clearDisplay();
-	display_handler.setCursor(0, 0);
-	display_handler.println(lastLeftEncoderPulseMillis);
-	display_handler.println(lastRightEncoderPulseMillis);
-	display_handler.display();
-	// pollDistanceSensor();
+	// steeringControlManual(1500);
+	// motorControl(0.40, 0.40);
 	// display_handler.clearDisplay();
-  	// display_handler.setCursor(0, 0);
-	// display_handler.print("Pulse micros: ");
-	// display_handler.println(udsEchoEndMicros);
-	// display_handler.print("Distance: ");
-	// display_handler.println(lastDistCm);
+	// display_handler.setCursor(0, 0);
+	// display_handler.println(lastLeftEncoderPulseMillis);
+	// display_handler.println(lastRightEncoderPulseMillis);
 	// display_handler.display();
+	display_handler.clearDisplay();
+  	display_handler.setCursor(0, 0);
+	display_handler.print("Pulse micros: ");
+	display_handler.println(udsEchoEndMicros);
+	display_handler.print("Distance: ");
+	display_handler.println(lastDistCm);
+	display_handler.display();
 
 	// motorControl(0.50, 0.50);
 	// steeringControlManual(1800);
@@ -296,8 +301,13 @@ void tapeFollowing() {
 				offTape = false;
 			}
 		}
-		
+
+		if (lastDistCm < 15.0) {
+			collisionAvoidanceOffTape();
+		} 
+
 		uint32_t currentTimeMillis = millis();
+
 		if (offTape) {
 			if (prevError >= 0)	{	// relies on prevError not being updated to avoid wiping the check condition
 				error = (NUM_TAPE_SENSORS) / 2.0;
@@ -413,10 +423,18 @@ void collisionAvoidanceOffTape() {
 	motorControl(0.0, 0.0);
 	steeringControl(0.0);
 	delay(200);
-	uint32_t nextLoopTime = millis() + 60;
-	while (lastDistCm < 20) {
+	uint32_t nextLoopTime = millis() + 80;
+	while (lastDistCm < 20.0) {
 		motorControl(-0.3, -0.3);
 		pollDistanceSensor();
+		display_handler.clearDisplay();
+		display_handler.setCursor(0, 0);
+		display_handler.println("COLLISION AVOIDANCE! ");
+		display_handler.print("Last collision: ");
+		display_handler.println(udsEchoEndMicros);
+		display_handler.print("Distance: ");
+		display_handler.println(lastDistCm);
+		display_handler.display();
 		while (millis() < nextLoopTime);
 	}
 	motorControl(0.0, 0.0);
@@ -436,7 +454,7 @@ void writeToDisplay(const char *str) {
 }
 
 void pollDistanceSensor() {
-	if (micros() - udsLastPulseMicros > 60000) {	// only activate UDS when guaranteed that the previous pulse has either been returned or dissipated
+	if (micros() - udsLastPulseMicros > 80000) {	// only activate UDS when guaranteed that the previous pulse has either been returned or dissipated
 		pulseReceived = false;
 		digitalWrite(PIN_UDS_FRONT_TRIGGER, LOW);
 		delayMicroseconds(2);
