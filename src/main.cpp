@@ -284,15 +284,6 @@ void tapeFollowing() {
 			// If we completely skipped over the tape line, then god help us we can't see that
 			// Perhaps do similar open-loop control to checkpoint: keep scanning as often as possible until we return to the tape line
 		} else {
-			if ((brakeState == 1 || brakeState == 2)) {	// we were previously off tape
-				brakeState = 3;
-				brake34TimeMillis = currentTimeMillis + 25;	// or however many milliseconds you want. Maybe vary with time in brakeState1?
-			} else if (brakeState == 3 && currentTimeMillis > brake34TimeMillis) {
-				brakeState = 4;
-				brake40TimeMillis = currentTimeMillis + 750;
-			} else if (brakeState == 4 && currentTimeMillis > brake40TimeMillis) {
-				brakeState = 0;
-			}
 			offTapeLoops=0;
 			error = errorFunc(tape_sensor_vals, TAPE_SENSOR_THRESHOLD);
 			// check if we are on a check point and which one it is
@@ -305,6 +296,16 @@ void tapeFollowing() {
 					onCheckpoint = true;
 					break;
 				}
+			}
+
+			if ((brakeState == 1 || brakeState == 2)) {	// we were previously off tape
+				brakeState = 3;
+				brake34TimeMillis = currentTimeMillis + 25;	// or however many milliseconds you want. Maybe vary with time in brakeState1?
+			} else if ((brakeState == 3 && currentTimeMillis > brake34TimeMillis) || brakeState == 0 && abs(error) >= 2.5) {
+				brakeState = 4;
+				brake40TimeMillis = currentTimeMillis + 750;
+			} else if (brakeState == 4 && currentTimeMillis > brake40TimeMillis) {
+				brakeState = 0;
 			}
 		}
 
@@ -333,8 +334,8 @@ void tapeFollowing() {
 					motorControl(0.0, -0.3);
 				}
 			} else if (brakeState == 2 || brakeState == 4) {	// try changing this to const differential
-				leftMotorPower = SLOW_DEFAULT_POWER - motorDif;
-				rightMotorPower = SLOW_DEFAULT_POWER + motorDif;
+				leftMotorPower = SLOW_DEFAULT_POWER - (SLOW_DEFAULT_POWER / DEFAULT_POWER) * motorDif;
+				rightMotorPower = SLOW_DEFAULT_POWER + (SLOW_DEFAULT_POWER / DEFAULT_POWER) * motorDif;
 				motorControl(leftMotorPower, rightMotorPower);
 			} else if (brakeState == 3) {
 				if (error > 0) {
