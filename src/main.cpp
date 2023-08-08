@@ -210,12 +210,12 @@ void tapeFollowing() {
 	double prevErrorDerivative = 0;	// from previous control loop, used for state recovery in case of checkpoint
 	const int TAPE_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the tape sensor to be on tape
 
-	const double DEFAULT_POWER = 0.38; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
+	const double DEFAULT_POWER = 0.40; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 	const double SLOW_DEFAULT_POWER = 0.25;	// The above, but when we want to go slow (e.g. off tape or re-entering)
 	const double STEERING_KP = 13.0;	// Steering angle PID proportionality constant
 	const double STEERING_KD = 1.0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
 	const double MOTORDIF_KP = 0.02;
-	const double MOTORDIF_KD = 0.001;	
+	const double MOTORDIF_KD = 0.002;	
 	const double MOTORDIF_TIME_KP = 0.002;	// increases differential if we are completely off tape for a long time
 	// MOTORSCALE_KP may have to be reduced at lower DEFAULT_POWER and increased at higher DEFAULT_POWER. 
 	// Tune it like any other PID variable if the robot looks unstable / overshoots due to long control system response time.
@@ -252,12 +252,13 @@ void tapeFollowing() {
 		if (currentTimeMillis < endLoopSkipTimeMillis) {
 			continue;
 		}
-
+		int tapeSensorsOnLine=0;
 		for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
 			tape_sensor_vals[i] = analogRead(PINS_TAPE_SENSORS[i]);
 			on_tape[i] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
 			if (on_tape[i]) {
 				offTape = false;
+				tapeSensorsOnLine++;
 			}
 		}
 
@@ -301,7 +302,7 @@ void tapeFollowing() {
 			}
 		}
 
-		if (onCheckpoint) {
+		if (onCheckpoint || tapeSensorsOnLine>3) {
 			steeringControl(0);
 			motorControl(SLOW_DEFAULT_POWER, SLOW_DEFAULT_POWER);
 			endLoopSkipTimeMillis = millis() + 50;
@@ -321,9 +322,9 @@ void tapeFollowing() {
 				motorControl(leftMotorPower, rightMotorPower);
 			} else if (brakeState == 1) {
 				if (error > 0) {
-					motorControl(-0.3, 0);
+					motorControl(-0.25, 0.1);
 				} else {
-					motorControl(0, -0.3);
+					motorControl(0.1, -0.25);
 				}
 			} else if (brakeState == 2 || brakeState == 3) {
 				leftMotorPower = SLOW_DEFAULT_POWER - motorDif;
