@@ -15,8 +15,8 @@
 #define PIN_HALL_SENSOR PB5	// as digital input
 #define PIN_BLOCKMOTOR_IN PB15	// as digital output (non-PWM, so max speed)
 #define PIN_BLOCKMOTOR_OUT PB14	// as digital output (non-PWM, so max speed)
-#define PIN_BLOCKMOTOR_LEFT_ENCODER PA15	// as digital input
-#define PIN_BLOCKMOTOR_RIGHT_ENCODER PB3	// as digital input
+#define PIN_BLOCKMOTOR_LEFT_ENCODER PB11	// as digital input
+#define PIN_BLOCKMOTOR_RIGHT_ENCODER PB10	// as digital input
 
 #define PIN_LED_BUILTIN PC13	// DEBUG ONLY: USE TO INDICATE CONTROL LOOP PROGRESSION WITHOUT LCD DISPLAY
 
@@ -42,7 +42,7 @@ const int MIN_STEERING_PULSEWIDTH_MICROS = 1180;	// absolute physical limit of l
 const int BOMB_EJECTION_TIME_MILLIS = 1000;
 volatile uint32_t bombEjectionEndTimeMillis = 0;
 volatile bool bombEject = false;
-volatile uint32_t lastLeftEncoderPulseMillis = -1, lastRightEncoderPulseMillis = 1;
+volatile uint32_t lastLeftEncoderPulseMillis = 0, lastRightEncoderPulseMillis = 0;
 volatile bool isFull = false;
 
 // DISTANCE SENSOR
@@ -83,7 +83,7 @@ void uds_irq();
 void testCode();
 
 //Define serial pins
-HardwareSerial Serial3(PB11, PB10);
+// HardwareSerial Serial3(PB11, PB10);
 
 
 void setup() {
@@ -107,13 +107,13 @@ void setup() {
 
   	// for testing, add an assertions check to make sure all variables remain in range. (Basically implementing a rep invariant checker.)
   	// default testing:
-	// display_handler.begin(SSD1306_SWITCHCAPVCC, 0x3C);
-	// display_handler.display();
-	// delay(2000);
-	// display_handler.clearDisplay();
-	// display_handler.setTextSize(1);
-	// display_handler.setTextColor(SSD1306_WHITE);
-	// writeToDisplay("Either there is no display code after startup, or the program froze before completing a control loop.");
+	display_handler.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+	display_handler.display();
+	delay(1000);
+	display_handler.clearDisplay();
+	display_handler.setTextSize(1);
+	display_handler.setTextColor(SSD1306_WHITE);
+	writeToDisplay("Either there is no display code after startup, or the program froze before completing a control loop.");
 
 	// set up block collection system. Hall sensor looks Schmitt triggered (switch time ~1us) and sees no bouncing
 	pinMode(PIN_HALL_SENSOR, INPUT_PULLUP);	// using our own resistor instead of Bluepill internal pullup resistor
@@ -124,15 +124,15 @@ void setup() {
 	bombEject = false;
 	attachInterrupt(digitalPinToInterrupt(PIN_HALL_SENSOR), interruptBombEjection, FALLING);	// With pullup resistor, Hall sensor goes low when in strong magnetic field
 	// Stall protection
-	pinMode(PIN_BLOCKMOTOR_LEFT_ENCODER, INPUT);
-	pinMode(PIN_BLOCKMOTOR_RIGHT_ENCODER, INPUT);
+	pinMode(PIN_BLOCKMOTOR_LEFT_ENCODER, INPUT_PULLUP);
+	pinMode(PIN_BLOCKMOTOR_RIGHT_ENCODER, INPUT_PULLUP);
 	attachInterrupt(digitalPinToInterrupt(PIN_BLOCKMOTOR_LEFT_ENCODER), leftBlockMotorEncoder_irq, RISING);
 	attachInterrupt(digitalPinToInterrupt(PIN_BLOCKMOTOR_RIGHT_ENCODER), rightBlockMotorEncoder_irq, RISING);
 
 
 	// Serial moniter setup for testing
-	Serial3.begin(9600);
-	Serial3.println("Setup done");
+	// Serial3.begin(9600);
+	// Serial3.println("Setup done");
 
 	// If needed, insert hardcoding for start and first turn here.
 }
@@ -155,15 +155,20 @@ void loop() {
 	// } else {
 
 	// }
-  	tapeFollowing();
-	return;
-	// testCode();
+  	// tapeFollowing();
+	// return;
+	testCode();
+	pollHallSensor();
 }
 
 void testCode() {
 	steeringControlManual(1500);
 	motorControl(0.40, 0.40);
-	delay(1000);
+	display_handler.clearDisplay();
+	display_handler.setCursor(0, 0);
+	display_handler.println(lastLeftEncoderPulseMillis);
+	display_handler.println(lastRightEncoderPulseMillis);
+	display_handler.display();
 	// pollDistanceSensor();
 	// display_handler.clearDisplay();
   	// display_handler.setCursor(0, 0);
@@ -404,6 +409,20 @@ void tapeFollowing() {
 	delay(10000000);
 }
 
+void collisionAvoidanceOffTape() {
+	motorControl(0.0, 0.0);
+	steeringControl(0.0);
+	delay(200);
+	uint32_t nextLoopTime = millis() + 60;
+	while (lastDistCm < 20) {
+		motorControl(-0.3, -0.3);
+		pollDistanceSensor();
+		while (millis() < nextLoopTime);
+	}
+	motorControl(0.0, 0.0);
+	delay(500);
+}
+
 
 /*
  * Clears display and writes a string. FOR DEBUG!
@@ -430,7 +449,7 @@ void pollDistanceSensor() {
 }
 
 void pollHallSensor() {
-	if (isFull) return;
+	// if (isFull) return;
 
 	uint32_t currentTimeMillis = millis();
 	if (bombEject && currentTimeMillis > bombEjectionEndTimeMillis) {
@@ -443,8 +462,8 @@ void pollHallSensor() {
 		}
 	}
 
-	if ((currentTimeMillis - lastLeftEncoderPulseMillis > 3000 && lastLeftEncoderPulseMillis != -1)
-		|| (currentTimeMillis - lastRightEncoderPulseMillis > 3000 && lastRightEncoderPulseMillis != -1)) {
+	if ((currentTimeMillis - lastLeftEncoderPulseMillis > 3000 && lastLeftEncoderPulseMillis != 0)
+		|| (currentTimeMillis - lastRightEncoderPulseMillis > 3000 && lastRightEncoderPulseMillis != 0)) {
 			// turn off both motors and disable the bomb detection interrupt to avoid spewing out blocks
 			detachInterrupt(digitalPinToInterrupt(PIN_BLOCKMOTOR_LEFT_ENCODER));
 			detachInterrupt(digitalPinToInterrupt(PIN_BLOCKMOTOR_RIGHT_ENCODER));
