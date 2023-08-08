@@ -286,7 +286,7 @@ void tapeFollowing() {
 		} else {
 			if ((brakeState == 1 || brakeState == 2)) {	// we were previously off tape
 				brakeState = 3;
-				brake34TimeMillis = currentTimeMillis + 30;	// or however many milliseconds you want. Maybe vary with time in brakeState1?
+				brake34TimeMillis = currentTimeMillis + 25;	// or however many milliseconds you want. Maybe vary with time in brakeState1?
 			} else if (brakeState == 3 && currentTimeMillis > brake34TimeMillis) {
 				brakeState = 4;
 				brake40TimeMillis = currentTimeMillis + 750;
@@ -328,9 +328,9 @@ void tapeFollowing() {
 				motorControl(leftMotorPower, rightMotorPower);
 			} else if (brakeState == 1) {
 				if (error > 0) {
-					motorControl(-0.3, 0.2);
+					motorControl(-0.3, 0.0);
 				} else {
-					motorControl(0.2, -0.3);
+					motorControl(0.0, -0.3);
 				}
 			} else if (brakeState == 2 || brakeState == 4) {	// try changing this to const differential
 				leftMotorPower = SLOW_DEFAULT_POWER - motorDif;
