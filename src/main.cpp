@@ -156,13 +156,16 @@ void loop() {
 	// } else {
 
 	// }
-  	// tapeFollowing();
-	// return;
-	pollDistanceSensor();
-	testCode();
-	if (lastDistCm < 15.0) {
-		collisionAvoidanceOffTape();
-	}
+  	tapeFollowing();
+	return;
+	// TODO: test motor control in collision avoidance, integration with tape following
+	// TODO: two-reading requirement to deal with noisy/unreliable measurements. (Maybe reduce hysterisis in this case.)
+	// TODO: also back up if distance not changing for long time? (e.g. <5% variation 2 seconds, or SE < 5%). Make sure this doesn't activate normally. 
+	// pollDistanceSensor();
+	// testCode();
+	// if (lastDistCm < 15.0) {
+	// 	collisionAvoidanceOffTape();
+	// }
 
 	// pollHallSensor();
 }
@@ -454,7 +457,7 @@ void writeToDisplay(const char *str) {
 }
 
 void pollDistanceSensor() {
-	if (micros() - udsLastPulseMicros > 80000) {	// only activate UDS when guaranteed that the previous pulse has either been returned or dissipated
+	if (micros() - udsLastPulseMicros > 70000) {	// only activate UDS when guaranteed that the previous pulse has either been returned or dissipated
 		pulseReceived = false;
 		digitalWrite(PIN_UDS_FRONT_TRIGGER, LOW);
 		delayMicroseconds(2);
