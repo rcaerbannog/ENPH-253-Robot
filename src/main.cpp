@@ -21,6 +21,10 @@
 #define PIN_UDS_FRONT_ECHO PB0	// as digital output
 #define PIN_UDS_FRONT_TRIGGER PB1	// as digital input
 
+#define PIN_LAUNCH_SWITCH PB9	// as digital input
+#define PIN_BOMB_RELEASE PB3	// as digital output. Allows power to flow through the fishing wire burn resistor. DO NOT KEEP HIGH FOR MORE THAN 10s!
+
+
 //#define PIN_CHECKPOINT_SENSOR_LEFT PA1	// as analog input
 //#define PIN_CHECKPOINT_SENSOR_RIGHT PA0	// as analog input
 #define PIN_STEERING_SERVO PA_6	// as PWM output - servo control
@@ -66,6 +70,7 @@ double debugLeftWheelAngle = 0;
 // put function declarations here:
 void interruptBombEjection();
 void writeToDisplay(const char *str);
+void pollBombDrop();
 void pollDistanceSensor();
 void pollHallSensor();
 double errorFunc(int tape_sensor_vals[], int TAPE_SENSOR_THRESHOLD);
@@ -79,6 +84,7 @@ void testCode();
 //Define serial pins
 HardwareSerial Serial3(PB11, PB10);
 
+uint32_t robotStartTimeMillis, bombReleaseTimeMillis, bombReleaseShutoffTimeMillis;
 
 void setup() {
 	pinMode(PIN_LMOTOR_FWD, OUTPUT);
@@ -113,14 +119,31 @@ void setup() {
 	pinMode(PIN_HALL_SENSOR, INPUT_PULLUP);	// using our own resistor instead of Bluepill internal pullup resistor
 	pinMode(PIN_BLOCKMOTOR_IN, OUTPUT);
 	pinMode(PIN_BLOCKMOTOR_OUT, OUTPUT);
-	digitalWrite(PIN_BLOCKMOTOR_OUT, LOW);
-	digitalWrite(PIN_BLOCKMOTOR_IN, HIGH);
+	
 	bombEject = false;
 	attachInterrupt(PIN_HALL_SENSOR, interruptBombEjection, FALLING);	// With pullup resistor, Hall sensor goes low when in strong magnetic field
-	
+
+	pinMode(PIN_LAUNCH_SWITCH, INPUT_PULLUP);	// will be HIGH when switch off, and LOW when switch on.
+	pinMode(PIN_BOMB_RELEASE, OUTPUT);	// will activate resistor
+
 	// Serial moniter setup for testing
 	Serial3.begin(9600);
 	Serial3.println("Setup done");
+
+	// Robot initialization code. Before each heat, check motor power by going through the startup procedure and seeing if the rear motors turn.
+	steeringControl(0.0);
+	motorControl(0, 0);
+	digitalWrite(PIN_BLOCKMOTOR_OUT, LOW);	// block motor rotation indicates that motors are working
+	digitalWrite(PIN_BLOCKMOTOR_IN, HIGH);
+	digitalWrite(PIN_BOMB_RELEASE, LOW);
+
+	while (digitalRead(PIN_LAUNCH_SWITCH) == HIGH);	// Busy loop. Make sure this doesn't get optimized out if we use build flags! Try delayMicroseconds(1)?
+
+	robotStartTimeMillis = millis();
+	bombReleaseTimeMillis = robotStartTimeMillis + 90000;	// 90s after robot start
+	bombReleaseShutoffTimeMillis = bombReleaseTimeMillis + 7000;	// resistor burn time 7s. Should be good for 6V 15R or 7.4V 20R.
+
+	// ANY HARDCODED START CODE GOES HERE. MAKE SEPERATE METHOD.
 
 	// If needed, insert hardcoding for start and first turn here.
 }
@@ -143,8 +166,10 @@ void loop() {
 	// } else {
 
 	// }
-  	tapeFollowing();
-	return;
+	if (digitalRead(PIN_LAUNCH_SWITCH) == LOW) {
+		tapeFollowing();
+	}
+	// pollBombDrop();
 	// testCode();
 }
 
@@ -249,6 +274,7 @@ void tapeFollowing() {
 
 		// handle interrupt resolution / tasks
 		// Make a dedicated queue for this later
+		pollBombDrop();
 		// pollDistanceSensor();
 		pollHallSensor();
 
@@ -393,6 +419,15 @@ void tapeFollowing() {
 	// right now, the control loop should never end. If we get here there's been an error.
 	motorControl(0.0, 0.0);
 	delay(10000000);
+}
+
+void pollBombDrop() {
+	uint32_t currentTime = millis();
+	if (currentTime > bombReleaseShutoffTimeMillis) {
+		digitalWrite(PIN_BOMB_RELEASE, LOW);
+	} else if (currentTime > bombReleaseTimeMillis) {
+		digitalWrite(PIN_BOMB_RELEASE, HIGH);
+	}
 }
 
 
