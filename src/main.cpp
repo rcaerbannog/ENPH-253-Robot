@@ -15,6 +15,8 @@
 #define PIN_HALL_SENSOR PB5	// as digital input
 #define PIN_BLOCKMOTOR_IN PB15	// as digital output (non-PWM, so max speed)
 #define PIN_BLOCKMOTOR_OUT PB14	// as digital output (non-PWM, so max speed)
+#define PIN_BLOCKMOTOR_LEFT_ENCODER PB12	// as digital input
+#define PIN_BLOCKMOTOR_RIGHT_ENCODER PB13	// as digital input
 
 #define PIN_LED_BUILTIN PC13	// DEBUG ONLY: USE TO INDICATE CONTROL LOOP PROGRESSION WITHOUT LCD DISPLAY
 
@@ -42,8 +44,10 @@ const double SERVO_NEUTRAL_PULSEWIDTH = 1500;	// In microseconds, default 1500 u
 const int MAX_STEERING_PULSEWIDTH_MICROS = 1900;	// (1950) absolute physical limit of left-driving servo rotation to left. Currently limited by chassis.
 const int MIN_STEERING_PULSEWIDTH_MICROS = 1180;	// absolute physical limit of left-driving servo rotation to right. Currently limited by inversion.
 const int BOMB_EJECTION_TIME_MILLIS = 1000;
-int bombEjectionEndTime = 0;
-bool bombEject = false;
+volatile uint32_t bombEjectionEndTimeMillis = 0;
+volatile bool bombEject = false;
+volatile uint32_t lastLeftEncoderPulseMillis = 0, lastRightEncoderPulseMillis = 0;
+volatile bool isFull = false;
 
 // DISTANCE SENSOR
 uint32_t udsLastPulseMicros = 0, udsEchoStartMicros = 0, udsEchoEndMicros = 0;
@@ -80,6 +84,8 @@ void steeringControlManual(int pulseWidthMicros);
 void motorControl(double lMotorPower, double rMotorPower);
 void uds_irq();
 void testCode();
+void leftBlockMotorEncoder_irq();
+void rightBlockMotorEncoder_irq();
 
 //Define serial pins
 HardwareSerial Serial3(PB11, PB10);
@@ -101,6 +107,11 @@ void setup() {
 	pinMode(PIN_UDS_FRONT_ECHO, INPUT);
 	pinMode(PIN_UDS_FRONT_TRIGGER, OUTPUT);
 	attachInterrupt(PIN_UDS_FRONT_ECHO, uds_irq, CHANGE);
+	// Stall protection
+	pinMode(PIN_BLOCKMOTOR_LEFT_ENCODER, INPUT_PULLUP);
+	pinMode(PIN_BLOCKMOTOR_RIGHT_ENCODER, INPUT_PULLUP);
+	attachInterrupt(digitalPinToInterrupt(PIN_BLOCKMOTOR_LEFT_ENCODER), leftBlockMotorEncoder_irq, RISING);
+	attachInterrupt(digitalPinToInterrupt(PIN_BLOCKMOTOR_RIGHT_ENCODER), rightBlockMotorEncoder_irq, RISING);
 
 
 	pinMode(PIN_LED_BUILTIN, OUTPUT);
@@ -198,7 +209,15 @@ void interruptBombEjection() {
 	digitalWrite(PIN_BLOCKMOTOR_IN, LOW);
 	digitalWrite(PIN_BLOCKMOTOR_OUT, HIGH);
 	bombEject = true;
-	bombEjectionEndTime = millis() + BOMB_EJECTION_TIME_MILLIS;
+	bombEjectionEndTimeMillis = millis() + BOMB_EJECTION_TIME_MILLIS;
+}
+
+void leftBlockMotorEncoder_irq() {
+	lastLeftEncoderPulseMillis = millis();
+}
+
+void rightBlockMotorEncoder_irq() {
+	lastRightEncoderPulseMillis = millis();
 }
 
 
@@ -456,14 +475,28 @@ void pollDistanceSensor() {
 }
 
 void pollHallSensor() {
-	if (bombEject && millis() > bombEjectionEndTime) {
+	if (isFull) return;
+
+	uint32_t currentTimeMillis = millis();
+	if (bombEject && currentTimeMillis > bombEjectionEndTimeMillis) {
 		if (digitalRead(PIN_HALL_SENSOR) == HIGH) {	// bomb is gone: Hall sensor does not see magnetic field
 			digitalWrite(PIN_BLOCKMOTOR_OUT, LOW);
 			digitalWrite(PIN_BLOCKMOTOR_IN, HIGH);
 			bombEject = false;
 		} else {	// bomb is still there
-			bombEjectionEndTime += 1000;	// check again 1000ms later
+			bombEjectionEndTimeMillis += 1000;	// check again 1000ms later
 		}
+	}
+
+	if ((currentTimeMillis - lastLeftEncoderPulseMillis > 3000 && lastLeftEncoderPulseMillis != 0)
+		|| (currentTimeMillis - lastRightEncoderPulseMillis > 3000 && lastRightEncoderPulseMillis != 0)) {
+			// turn off both motors and disable the bomb detection interrupt to avoid spewing out blocks
+			detachInterrupt(digitalPinToInterrupt(PIN_BLOCKMOTOR_LEFT_ENCODER));
+			detachInterrupt(digitalPinToInterrupt(PIN_BLOCKMOTOR_RIGHT_ENCODER));
+			isFull = true;
+			bombEject = false;
+			digitalWrite(PIN_BLOCKMOTOR_IN, LOW);
+			digitalWrite(PIN_BLOCKMOTOR_OUT, LOW);
 	}
 }
 
