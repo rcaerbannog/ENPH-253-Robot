@@ -74,7 +74,7 @@ double debugLeftWheelAngle = 0;
 // put function declarations here:
 void interruptBombEjection();
 void writeToDisplay(const char *str);
-void pollBombDrop();
+void pollBombRelease();
 void pollDistanceSensor();
 void pollHallSensor();
 double errorFunc(int tape_sensor_vals[], int TAPE_SENSOR_THRESHOLD);
@@ -118,13 +118,13 @@ void setup() {
 
   	// for testing, add an assertions check to make sure all variables remain in range. (Basically implementing a rep invariant checker.)
   	// default testing:
-	// display_handler.begin(SSD1306_SWITCHCAPVCC, 0x3C);
-	// display_handler.display();
-	// delay(2000);
-	// display_handler.clearDisplay();
-	// display_handler.setTextSize(1);
-	// display_handler.setTextColor(SSD1306_WHITE);
-	// writeToDisplay("Either there is no display code after startup, or the program froze before completing a control loop.");
+	display_handler.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+	display_handler.display();
+	delay(2000);
+	display_handler.clearDisplay();
+	display_handler.setTextSize(1);
+	display_handler.setTextColor(SSD1306_WHITE);
+	writeToDisplay("Either there is no display code after startup, or the program froze before completing a control loop.");
 
 	// set up block collection system. Hall sensor looks Schmitt triggered (switch time ~1us) and sees no bouncing
 	pinMode(PIN_HALL_SENSOR, INPUT_PULLUP);	// using our own resistor instead of Bluepill internal pullup resistor
@@ -150,8 +150,10 @@ void setup() {
 
 	while (digitalRead(PIN_LAUNCH_SWITCH) == HIGH);	// Busy loop. Make sure this doesn't get optimized out if we use build flags! Try delayMicroseconds(1)?
 
+	writeToDisplay("LAUNCH!");
+
 	robotStartTimeMillis = millis();
-	bombReleaseTimeMillis = robotStartTimeMillis + 90000;	// 90s after robot start
+	bombReleaseTimeMillis = robotStartTimeMillis + 10000;	// 90s after robot start
 	bombReleaseShutoffTimeMillis = bombReleaseTimeMillis + 7000;	// resistor burn time 7s. Should be good for 6V 15R or 7.4V 20R.
 
 	// ANY HARDCODED START CODE GOES HERE. MAKE SEPERATE METHOD.
@@ -180,7 +182,8 @@ void loop() {
 	if (digitalRead(PIN_LAUNCH_SWITCH) == LOW) {
 		tapeFollowing();
 	}
-	// pollBombDrop();
+
+	// pollBombRelease();	// for seperate testing of bomb drop
 	// testCode();
 }
 
@@ -280,7 +283,7 @@ void tapeFollowing() {
 
 	// CONTROL LOOP
 	int loopCounter = 0;
-	while (true) {
+	while (digitalRead(PIN_LAUNCH_SWITCH) == LOW) {
 		digitalWrite(PIN_LED_BUILTIN, HIGH);	// DEBUG ONLY, for monitoring control loop progression without LCD display
 		double error;	// Unitless; Positive error means to right of tape, negative to left; prevError only for debug
 		double errorDerivative;	// prevErrorDerivative only for debug
@@ -293,7 +296,7 @@ void tapeFollowing() {
 
 		// handle interrupt resolution / tasks
 		// Make a dedicated queue for this later
-		pollBombDrop();
+		pollBombRelease();
 		// pollDistanceSensor();
 		pollHallSensor();
 
@@ -435,17 +438,20 @@ void tapeFollowing() {
 		// }
 		loopCounter++;
 	}
-	// right now, the control loop should never end. If we get here there's been an error.
-	motorControl(0.0, 0.0);
-	delay(10000000);
+	// The loop will exit if the launch switch is turned off again. But this does not reset the bluepill, bomb release, or block collection!
+	steeringControl(0);
+	motorControl(0, 0);
+	digitalWrite(PIN_BOMB_RELEASE, LOW);
 }
 
-void pollBombDrop() {
+void pollBombRelease() {
 	uint32_t currentTime = millis();
 	if (currentTime > bombReleaseShutoffTimeMillis) {
 		digitalWrite(PIN_BOMB_RELEASE, LOW);
+		writeToDisplay("BOMB RELEASE SHUTOFF");
 	} else if (currentTime > bombReleaseTimeMillis) {
 		digitalWrite(PIN_BOMB_RELEASE, HIGH);
+		writeToDisplay("BOMB RELEASE UNDERWAY");
 	}
 }
 
