@@ -297,7 +297,7 @@ void tapeFollowing() {
 					break;
 				}
 			}
-
+			
 			if ((brakeState == 1 || brakeState == 2)) {	// we were previously off tape
 				brakeState = 3;
 				brake34TimeMillis = currentTimeMillis + 25;	// or however many milliseconds you want. Maybe vary with time in brakeState1?
@@ -334,8 +334,8 @@ void tapeFollowing() {
 					motorControl(0.0, -0.3);
 				}
 			} else if (brakeState == 2 || brakeState == 4) {	// try changing this to const differential
-				leftMotorPower = SLOW_DEFAULT_POWER - (SLOW_DEFAULT_POWER / DEFAULT_POWER) * motorDif;
-				rightMotorPower = SLOW_DEFAULT_POWER + (SLOW_DEFAULT_POWER / DEFAULT_POWER) * motorDif;
+				leftMotorPower = SLOW_DEFAULT_POWER - motorDif;
+				rightMotorPower = SLOW_DEFAULT_POWER + motorDif;
 				motorControl(leftMotorPower, rightMotorPower);
 			} else if (brakeState == 3) {
 				if (error > 0) {
@@ -505,8 +505,8 @@ void steeringControlManual(int pulseWidthMicros) {
  * @param rMotorPower Same for the right motor, truncated to between -1 and 1.
  */
 void motorControl(double lMotorPower, double rMotorPower) {
-	lMotorPower = max(-0.50, min(0.8, lMotorPower));
-	rMotorPower = max(-0.50, min(0.8, rMotorPower));
+	lMotorPower = max(-0.50, min(1.0, lMotorPower));
+	rMotorPower = max(-0.50, min(1.0, rMotorPower));
 	if (lMotorPower > 0) {	// forwards
 		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 		pwm_start(PIN_LMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
