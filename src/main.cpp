@@ -50,10 +50,10 @@ volatile uint32_t lastLeftEncoderPulseMillis = 0, lastRightEncoderPulseMillis = 
 volatile bool isFull = false;
 
 // DISTANCE SENSOR
-uint32_t udsLastPulseMicros = 0, udsEchoStartMicros = 0, udsEchoEndMicros = 0;
-bool udsPulse = false;
-bool pulseReceived = false;
-double lastDistCm = 0;
+volatile uint32_t udsLastPulseMicros = 0, udsEchoStartMicros = 0, udsEchoEndMicros = 0;
+volatile bool udsPulse = false;
+volatile bool pulseReceived = false;
+volatile double lastDistCm = 0;
 
 /*
 Note: Motor PWM frequency cannot be too high, else gate driver turn-on time 
