@@ -213,6 +213,7 @@ void tapeFollowing() {
 
 	const double DEFAULT_POWER = 0.45; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 	const double SLOW_DEFAULT_POWER = 0.25;	// The above, but when we want to go slow (e.g. off tape or re-entering)
+	const double BRAKESTATE_4_POWER=0.35;
 	const double STEERING_KP = 9.0;	// Steering angle PID proportionality constant
 	const double STEERING_KD = 1.0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
 	const double MOTORDIF_KP = 0.01;
@@ -329,13 +330,17 @@ void tapeFollowing() {
 				motorControl(leftMotorPower, rightMotorPower);
 			} else if (brakeState == 1) {
 				if (error > 0) {
-					motorControl(-0.3, 0.0);
+					motorControl(-0.3, -0.05);
 				} else {
-					motorControl(0.0, -0.3);
+					motorControl(-0.05, -0.3);
 				}
-			} else if (brakeState == 2 || brakeState == 4) {	// try changing this to const differential
+			} else if (brakeState == 2) {	// try changing this to const differential
 				leftMotorPower = SLOW_DEFAULT_POWER - motorDif;
 				rightMotorPower = SLOW_DEFAULT_POWER + motorDif;
+				motorControl(leftMotorPower, rightMotorPower);
+			}else if (brakeState == 4) {	// try changing this to const differential
+				leftMotorPower = BRAKESTATE_4_POWER - motorDif;
+				rightMotorPower = BRAKESTATE_4_POWER + motorDif;
 				motorControl(leftMotorPower, rightMotorPower);
 			} else if (brakeState == 3) {
 				if (error > 0) {
