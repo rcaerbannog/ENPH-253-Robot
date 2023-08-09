@@ -505,8 +505,8 @@ void steeringControlManual(int pulseWidthMicros) {
  * @param rMotorPower Same for the right motor, truncated to between -1 and 1.
  */
 void motorControl(double lMotorPower, double rMotorPower) {
-	lMotorPower = max(-0.50, min(1.0, lMotorPower));
-	rMotorPower = max(-0.50, min(1.0, rMotorPower));
+	lMotorPower = max(-0.50, min(0.8, lMotorPower));
+	rMotorPower = max(-0.50, min(0.8, rMotorPower));
 	if (lMotorPower > 0) {	// forwards
 		pwm_start(PIN_LMOTOR_REV, MOTOR_PWM_FREQ, 0, RESOLUTION_10B_COMPARE_FORMAT);
 		pwm_start(PIN_LMOTOR_FWD, MOTOR_PWM_FREQ, (int) (1023 * lMotorPower), RESOLUTION_10B_COMPARE_FORMAT);
