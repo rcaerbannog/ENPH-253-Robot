@@ -49,6 +49,7 @@ volatile bool isFull = false;
 volatile uint32_t udsLastPulseMicros = 0, udsEchoStartMicros = 0, udsEchoEndMicros = 0;
 volatile bool udsPulse = false;
 volatile bool pulseReceived = false;
+volatile double prevLastDistCm = 9999.0;
 volatile double lastDistCm = 9999.0;
 
 /*
@@ -184,6 +185,8 @@ void testCode() {
 	display_handler.println(udsEchoEndMicros);
 	display_handler.print("Distance: ");
 	display_handler.println(lastDistCm);
+	display_handler.println("Last dist: ");
+	display_handler.println(prevLastDistCm);
 	display_handler.display();
 
 	// motorControl(0.50, 0.50);
@@ -213,11 +216,12 @@ void uds_irq() {
 	if (udsPulse) {
 		udsEchoEndMicros = micros();
 		udsPulse = false;
+		prevLastDistCm = lastDistCm;
 		if (udsEchoStartMicros - udsLastPulseMicros < 30000) {
 			pulseReceived = true;
 			lastDistCm = (udsEchoEndMicros - udsEchoStartMicros) / 58.0;
 		} else {
-			lastDistCm = 9999.0;	// invalid dist
+			lastDistCm = 9999.0;	// invalid dist. But don't immediately 
 		}
 	} else {
 		udsEchoStartMicros = micros();
@@ -294,7 +298,7 @@ void tapeFollowing() {
 
 		// handle interrupt resolution / tasks
 		// Make a dedicated queue for this later
-		// pollDistanceSensor();
+		pollDistanceSensor();
 		pollHallSensor();
 
 		for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
@@ -312,6 +316,10 @@ void tapeFollowing() {
 		uint32_t currentTimeMillis = millis();
 
 		if (offTape) {
+			if (lastDistCm < 15.0 && prevLastDistCm < 15.0) {
+				collisionAvoidanceOffTape();
+				continue;
+			}
 			if (prevError >= 0)	{	// relies on prevError not being updated to avoid wiping the check condition
 				error = (NUM_TAPE_SENSORS) / 2.0;
 			}
@@ -423,11 +431,11 @@ void tapeFollowing() {
 }
 
 void collisionAvoidanceOffTape() {
-	motorControl(0.0, 0.0);
 	steeringControl(0.0);
-	delay(200);
+	motorControl(0.0, 0.0);
+	delay(2000);
 	uint32_t nextLoopTime = millis() + 80;
-	while (lastDistCm < 20.0) {
+	while (lastDistCm < 20.0 || prevLastDistCm < 20.0) {
 		motorControl(-0.3, -0.3);
 		pollDistanceSensor();
 		display_handler.clearDisplay();
