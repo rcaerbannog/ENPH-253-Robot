@@ -270,13 +270,11 @@ void tapeFollowing() {
 	int nextLoopTime = millis() + LOOP_TIME_MILLIS;
 	uint32_t lastLoopTimeMillis = millis();
 	uint32_t last2LoopTimeMillis = lastLoopTimeMillis - 10;
-	uint32_t last3LoopTimeMillis = lastLoopTimeMillis - 20;
 
 	int tape_sensor_vals[NUM_TAPE_SENSORS] = {0, 0, 0, 0, 0, 0};
 	bool on_tape[NUM_TAPE_SENSORS] = {true, true, true, true};
 	double prevError = 0;	// from previous control loop, used for derivative control only if prevLeftOnTape and prevRightOnTape.
 	double prev2Error = 0;
-	double prev3Error = 0;
 
 	const double DEFAULT_POWER = 0.55; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 	const double SLOW_DEFAULT_POWER = 0.25;	// The above, but when we want to go slow (e.g. off tape or re-entering)
@@ -413,17 +411,15 @@ void tapeFollowing() {
 				motorControl(leftMotorPower, rightMotorPower);
 			} else if (brakeState == 3) {
 				if (error > 0) {
-					motorControl(0, 1);
+					motorControl(-0.1, 1);
 				} else {
-					motorControl(1, 0);
+					motorControl(1, -0.1);
 				}
 			}
 			
-			prev3Error = prev2Error;
 			prev2Error = prevError;
 			prevError = error;
 
-			last3LoopTimeMillis = last2LoopTimeMillis;
 			last2LoopTimeMillis = lastLoopTimeMillis;
 			lastLoopTimeMillis = currentTimeMillis;
 		}
