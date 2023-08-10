@@ -269,8 +269,6 @@ void tapeFollowing() {
 	uint32_t lastLoopTimeMillis = micros();
 	uint32_t last2LoopTimeMillis = lastLoopTimeMillis - 10000;
 
-	int tape_sensor_vals[NUM_TAPE_SENSORS] = {0, 0, 0, 0, 0, 0};
-	bool on_tape[NUM_TAPE_SENSORS] = {true, true, true, true};
 	double prevError = 0;	// from previous control loop, used for derivative control only if prevLeftOnTape and prevRightOnTape.
 	double prev2Error = 0;
 
@@ -281,7 +279,7 @@ void tapeFollowing() {
 	const double STEERING_KD = 1.0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
 	const double MOTORDIF_KP = 0.01;
 	const double MOTORDIF_KD = 0.002;	
-	const double MOTORDIF_TIME_KP = 0.002;	// increases differential if we are completely off tape for a long time
+	const double MOTORDIF_TIME_KP = 0.004;	// increases differential if we are completely off tape for a long time
 	// MOTORSCALE_KP may have to be reduced at lower DEFAULT_POWER and increased at higher DEFAULT_POWER. 
 	// Tune it like any other PID variable if the robot looks unstable / overshoots due to long control system response time.
 	bool skipLoop=0;
@@ -325,9 +323,18 @@ void tapeFollowing() {
 			continue;
 		}
 		int tapeSensorsOnLine=0;
+
+		int tape_sensor_vals[NUM_TAPE_SENSORS] = {};	// all zeroes
+		bool on_tape[NUM_TAPE_SENSORS] = {};	// all false
+
+		for (int reading = 0; reading < NUM_READINGS; reading++) {
+			for (int sensor = 0; sensor < NUM_TAPE_SENSORS; sensor++) {
+				tape_sensor_vals[sensor] += analogRead(PINS_TAPE_SENSORS[sensor]);
+			}
+		}
 		for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
 			tape_sensor_vals[i] = analogRead(PINS_TAPE_SENSORS[i]);
-			on_tape[i] = tape_sensor_vals[i] > TAPE_SENSOR_THRESHOLD;
+			on_tape[i] = tape_sensor_vals[i] > NUM_READINGS * TAPE_SENSOR_THRESHOLD;
 			if (on_tape[i]) {
 				offTape = false;
 				tapeSensorsOnLine++;
@@ -533,8 +540,8 @@ double errorFunc(int tape_sensor_vals[], int TAPE_SENSOR_THRESHOLD) {
 	int sumSensorVals = 0;
 	int sumSensorValsPosWeighted = 0;
 	for (int i = 0; i < NUM_TAPE_SENSORS; i++) {
-		sumSensorVals += max(0, tape_sensor_vals[i] - TAPE_SENSOR_THRESHOLD);
-		sumSensorValsPosWeighted += i * max(0, tape_sensor_vals[i] - TAPE_SENSOR_THRESHOLD);
+		sumSensorVals += max(0, tape_sensor_vals[i] - NUM_READINGS * TAPE_SENSOR_THRESHOLD);
+		sumSensorValsPosWeighted += i * max(0, tape_sensor_vals[i] - NUM_READINGS * TAPE_SENSOR_THRESHOLD);
 	}
 	double error = 0.5 * (NUM_TAPE_SENSORS - 1) - ((double) sumSensorValsPosWeighted) / ((double) sumSensorVals);
 	return error;
