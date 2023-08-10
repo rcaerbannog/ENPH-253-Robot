@@ -32,6 +32,7 @@
 #define PIN_STEERING_SERVO PA_6	// as PWM output - servo control
 #define NUM_TAPE_SENSORS 6	// Rep invariant: MUST be the same as length of PINS_TAPE_SENSORS
 const int PINS_TAPE_SENSORS[NUM_TAPE_SENSORS] = {PA0, PA1, PA2, PA3, PA4, PA5};	// as analog input. In order from left to right sensors.
+const int TAPE_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the tape sensor to be on tape
 
 /*
  * TAPE FOLLOWING
@@ -153,11 +154,9 @@ void setup() {
 	}	// Busy loop. Make sure this doesn't get optimized out if we use build flags! Try delayMicroseconds(1)?
 
 	// writeToDisplay("LAUNCH!");
-
 	robotStartTimeMillis = millis();
 	bombReleaseTimeMillis = robotStartTimeMillis + 10000;	// 90s after robot start
 	bombReleaseShutoffTimeMillis = bombReleaseTimeMillis + 3000;	// resistor burn time 3s. Should be good for 6V 15R or 7.4V 20R.
-
 	// ANY HARDCODED START CODE GOES HERE. MAKE SEPERATE METHOD.
 
 	// If needed, insert hardcoding for start and first turn here.
@@ -182,7 +181,24 @@ void loop() {
 
 	// }
 	if (digitalRead(PIN_LAUNCH_SWITCH) == LOW) {
+		steeringControl(0.0);
+		motorControl(0.3, 0.3);
+		delay(500);
+		while (analogRead(PINS_TAPE_SENSORS[1]) < TAPE_SENSOR_THRESHOLD && analogRead(PINS_TAPE_SENSORS[4]) < TAPE_SENSOR_THRESHOLD) {
+			// do nothing
+		}
+		if (analogRead(PINS_TAPE_SENSORS[1]) > TAPE_SENSOR_THRESHOLD) {
+			steeringControl(-30.0);
+		} else {
+			steeringControl(30.0);
+		}
+		delay(100);
+		
 		tapeFollowing();
+		steeringControl(0);
+		motorControl(0, 0);
+		digitalWrite(PIN_BOMB_RELEASE, LOW);
+		delay(1000);
 	}
 
 	// pollBombRelease();	// for seperate testing of bomb drop
@@ -261,7 +277,6 @@ void tapeFollowing() {
 	double prevError = 0;	// from previous control loop, used for derivative control only if prevLeftOnTape and prevRightOnTape.
 	double prev2Error = 0;
 	double prev3Error = 0;
-	const int TAPE_SENSOR_THRESHOLD = 175;	// The analogRead() value above which we consider the tape sensor to be on tape
 
 	const double DEFAULT_POWER = 0.55; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 	const double SLOW_DEFAULT_POWER = 0.25;	// The above, but when we want to go slow (e.g. off tape or re-entering)
@@ -277,7 +292,7 @@ void tapeFollowing() {
 	int offTapeLoops=0;
 
 	enum motorControlState {NORMAL, OFF_TAPE_BRAKE, OFF_TAPE_STEADY, RECOVERY_INERTIA_COUNTER, RECOVERY_STEADY};	// FOR USE LATER
-	int brakeState = 0;	// 0 for not activated, 1 for active, 2 for offTape and active, 3 for onTape and active. Reset to 0 short while after reentering tape.
+	int brakeState = 4;	// 0 for not activated, 1 for active, 2 for offTape and active, 3 for onTape and active. Reset to 0 short while after reentering tape.
 	uint32_t brake12TimeMillis = 0;
 	uint32_t brake34TimeMillis = 0;
 	uint32_t brake40TimeMillis = 0;
@@ -449,9 +464,6 @@ void tapeFollowing() {
 		loopCounter++;
 	}
 	// The loop will exit if the launch switch is turned off again. But this does not reset the bluepill, bomb release, or block collection!
-	steeringControl(0);
-	motorControl(0, 0);
-	digitalWrite(PIN_BOMB_RELEASE, LOW);
 }
 
 void pollBombRelease() {
