@@ -24,7 +24,7 @@
 #define PIN_UDS_FRONT_TRIGGER PB1	// as digital input
 
 #define PIN_LAUNCH_SWITCH PB9	// as digital input
-#define PIN_BOMB_RELEASE PB3	// as digital output. Allows power to flow through the fishing wire burn resistor. DO NOT KEEP HIGH FOR MORE THAN 10s!
+#define PIN_BOMB_RELEASE PA15	// as digital output. Allows power to flow through the fishing wire burn resistor. DO NOT KEEP HIGH FOR MORE THAN 10s!
 
 
 //#define PIN_CHECKPOINT_SENSOR_LEFT PA1	// as analog input
@@ -151,13 +151,12 @@ void setup() {
 	digitalWrite(PIN_BOMB_RELEASE, LOW);
 
 	while (digitalRead(PIN_LAUNCH_SWITCH) == HIGH) {
-		pollHallSensor();
 	}	// Busy loop. Make sure this doesn't get optimized out if we use build flags! Try delayMicroseconds(1)?
 
 	// writeToDisplay("LAUNCH!");
 	robotStartTimeMillis = millis();
 	bombReleaseTimeMillis = robotStartTimeMillis + 10000;	// 90s after robot start
-	bombReleaseShutoffTimeMillis = bombReleaseTimeMillis + 3000;	// resistor burn time 3s. Should be good for 6V 15R or 7.4V 20R.
+	bombReleaseShutoffTimeMillis = bombReleaseTimeMillis + 7000;	// resistor burn time 3s. Should be good for 6V 15R or 7.4V 20R.
 	// ANY HARDCODED START CODE GOES HERE. MAKE SEPERATE METHOD.
 
 	// If needed, insert hardcoding for start and first turn here.
@@ -297,6 +296,9 @@ void tapeFollowing() {
 	// If we are on tape and we have been on tape for more than XX ms, normal motor control
 	// If we are off tape and we have 
 	uint32_t endLoopSkipTimeMillis = 0;
+
+	lastLeftEncoderPulseMillis = millis();
+	lastRightEncoderPulseMillis = millis();
 
 	// CONTROL LOOP
 	int loopCounter = 0;
