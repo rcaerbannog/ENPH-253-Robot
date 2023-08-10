@@ -49,6 +49,7 @@ volatile uint32_t bombEjectionEndTimeMillis = 0;
 volatile bool bombEject = false;
 volatile uint32_t lastLeftEncoderPulseMillis = 0, lastRightEncoderPulseMillis = 0;
 volatile bool isFull = false;
+const int NUM_READINGS = 3;
 
 // DISTANCE SENSOR
 volatile uint32_t udsLastPulseMicros = 0, udsEchoStartMicros = 0, udsEchoEndMicros = 0;
@@ -266,10 +267,8 @@ void tapeFollowing() {
 	*/
 
 	// REDUCE THIS TO 20 IN TESTING
-	const int LOOP_TIME_MILLIS = 5;	// Control loop period. Must be enough time for the code inside to execute!
-	int nextLoopTime = millis() + LOOP_TIME_MILLIS;
-	uint32_t lastLoopTimeMillis = millis();
-	uint32_t last2LoopTimeMillis = lastLoopTimeMillis - 10;
+	uint32_t lastLoopTimeMillis = micros();
+	uint32_t last2LoopTimeMillis = lastLoopTimeMillis - 10000;
 
 	int tape_sensor_vals[NUM_TAPE_SENSORS] = {0, 0, 0, 0, 0, 0};
 	bool on_tape[NUM_TAPE_SENSORS] = {true, true, true, true};
@@ -279,7 +278,7 @@ void tapeFollowing() {
 	const double DEFAULT_POWER = 0.55; // Power setting, scales all power sent to the motors between 0 and 1. (Ideally want this to be 1.)
 	const double SLOW_DEFAULT_POWER = 0.25;	// The above, but when we want to go slow (e.g. off tape or re-entering)
 	const double BRAKESTATE_4_POWER = 0.4;
-	const double STEERING_KP = 10;	// Steering angle PID proportionality constant
+	const double STEERING_KP = 9.0;	// Steering angle PID proportionality constant
 	const double STEERING_KD = 1.0;	// Steering angle PID derivative constant, per control loop time LOOP_TIME_MILLIS 
 	const double MOTORDIF_KP = 0.01;
 	const double MOTORDIF_KD = 0.002;	
@@ -319,6 +318,7 @@ void tapeFollowing() {
 		pollHallSensor();
 
 		uint32_t currentTimeMillis = millis();
+		uint32_t currentTimeMicros = micros();
 		if (currentTimeMillis < endLoopSkipTimeMillis) {
 			continue;
 		}
@@ -387,7 +387,7 @@ void tapeFollowing() {
 			// Set neutral motor power to 0.5 and add power (fraction or percentage?) to this
 			// Encoder-based speed control can come later
 			// errorDerivative = (currentTimeMillis > lastLoopTimeMillis) ? 250 * (error - prevError) / (currentTimeMillis - lastLoopTimeMillis) : 0;
-			errorDerivative = (currentTimeMillis > last2LoopTimeMillis) ? 500 * (error - prev2Error) / (currentTimeMillis - last2LoopTimeMillis) : 0;
+			errorDerivative = (currentTimeMicros > last2LoopTimeMillis) ? 1000 * 700 * (error - prev2Error) / (currentTimeMicros - last2LoopTimeMillis) : 0;
 			steeringAngleDeg = max(-60.0, min(60.0, STEERING_KP * error + STEERING_KD * errorDerivative));
 			steeringControl(steeringAngleDeg);
 			motorDif = MOTORDIF_KP * error + MOTORDIF_KD * errorDerivative + ((error >= 0) ? 1 : -1) * MOTORDIF_TIME_KP * offTapeLoops;
@@ -421,7 +421,7 @@ void tapeFollowing() {
 			prevError = error;
 
 			last2LoopTimeMillis = lastLoopTimeMillis;
-			lastLoopTimeMillis = currentTimeMillis;
+			lastLoopTimeMillis = currentTimeMicros;
 		}
 
 		digitalWrite(PIN_LED_BUILTIN, LOW);
